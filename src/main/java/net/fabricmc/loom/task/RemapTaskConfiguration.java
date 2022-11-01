@@ -103,7 +103,7 @@ public class RemapTaskConfiguration {
 			}
 		});
 
-		if (getBooleanProperty(project, "fabric.loom.disableRemappedVariants")) {
+		if (GradleUtils.getBooleanProperty(project, Constants.Properties.DISABLE_REMAPPED_VARIANTS)) {
 			return;
 		}
 
@@ -154,7 +154,7 @@ public class RemapTaskConfiguration {
 
 		tasks.named(BasePlugin.ASSEMBLE_TASK_NAME).configure(task -> task.dependsOn(remapSourcesTask));
 
-		if (getBooleanProperty(project, "fabric.loom.disableRemappedVariants")) {
+		if (GradleUtils.getBooleanProperty(project, "fabric.loom.disableRemappedVariants")) {
 			return;
 		}
 

@@ -184,4 +184,10 @@ public class Constants {
 		private Forge() {
 		}
 	}
+
+	public static final class Properties {
+		public static final String MULTI_PROJECT_OPTIMISATION = "fabric.loom.multiProjectOptimisation";
+		public static final String DONT_REMAP = "fabric.loom.dontRemap";
+		public static final String DISABLE_REMAPPED_VARIANTS = "fabric.loom.disableRemappedVariants";
+	}
 }

@@ -68,7 +68,6 @@ import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RegularFileProperty;
-import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.provider.Provider;
@@ -79,6 +78,7 @@ import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.TaskDependency;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -152,6 +152,18 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	@Input
 	public abstract Property<Boolean> getInjectAccessWidener();
 
+	/**
+	 * Gets the jar paths to the access wideners that will be converted to ATs for Forge runtime.
+	 * If you specify multiple files, they will be merged into one.
+	 *
+	 * <p>The specified files will be converted and removed from the final jar.
+	 *
+	 * @return the property containing access widener paths in the final jar
+	 */
+	@Input
+	@ApiStatus.Internal
+	public abstract Property<Boolean> getUseMixinAP();
+
 	private final Supplier<TinyRemapperService> tinyRemapperService = Suppliers.memoize(() -> TinyRemapperService.getOrCreate(this));
 
 	@Inject
@@ -185,7 +197,9 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			getNestedJars().builtBy(forgeNestedJars.map(Pair::right));
 		}
 
-		setupPreparationTask();
+		if (getLoomExtension().multiProjectOptimisation()) {
+			setupPreparationTask();
+		}
 	}
 
 	private void setupPreparationTask() {
@@ -219,6 +233,8 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), tinyRemapperService.get()));
 			params.getRemapClasspath().from(getClasspath());
+
+			params.getMultiProjectOptimisation().set(getLoomExtension().multiProjectOptimisation());
 
 			final boolean legacyMixin = extension.getMixin().getUseLegacyMixinAp().get();
 			params.getUseMixinExtension().set(!legacyMixin);
@@ -351,6 +367,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		SetProperty<String> getAtAccessWideners();
 
 		Property<Boolean> getUseMixinExtension();
+		Property<Boolean> getMultiProjectOptimisation();
 
 		record RefmapData(List<String> mixinConfigs, String refmapName) implements Serializable { }
 		ListProperty<RefmapData> getMixinData();
@@ -374,6 +391,10 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			try {
 				LOGGER.info("Remapping {} to {}", inputFile, outputFile);
 
+				if (!getParameters().getMultiProjectOptimisation().get()) {
+					prepare();
+				}
+
 				tinyRemapper = tinyRemapperService.getTinyRemapperForRemapping();
 
 				remap();
@@ -396,6 +417,10 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 				rewriteJar();
 
+				if (!getParameters().getMultiProjectOptimisation().get()) {
+					tinyRemapperService.close();
+				}
+
 				LOGGER.debug("Finished remapping {}", inputFile);
 			} catch (Exception e) {
 				try {
@@ -406,6 +431,11 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 				throw ExceptionUtil.createDescriptiveWrapper(RuntimeException::new, "Failed to remap", e);
 			}
+		}
+
+		private void prepare() {
+			final Path inputFile = getParameters().getInputFile().getAsFile().get().toPath();
+			PrepareJarRemapTask.prepare(tinyRemapperService, inputFile);
 		}
 
 		private void remap() throws IOException {

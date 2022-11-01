@@ -177,4 +177,12 @@ public interface LoomGradleExtension extends LoomGradleExtensionAPI {
 
 	ForgeRunsProvider getForgeRunsProvider();
 	void setForgeRunsProvider(ForgeRunsProvider forgeRunsProvider);
+
+	/**
+	 * If true, multi-project optimisation mode is enabled. This mode makes builds with many Loom projects
+	 * much faster by increasing sharing and disabling some functionality.
+	 *
+	 * <p>You can enable it by setting the Gradle property {@code fabric.loom.multiProjectOptimisation} to {@code true}.
+	 */
+	boolean multiProjectOptimisation();
 }

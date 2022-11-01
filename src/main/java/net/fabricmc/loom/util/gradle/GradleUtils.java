@@ -25,6 +25,7 @@
 package net.fabricmc.loom.util.gradle;
 
 import org.gradle.api.Project;
+import org.gradle.api.provider.Provider;
 
 public final class GradleUtils {
 	private GradleUtils() {
@@ -40,5 +41,19 @@ public final class GradleUtils {
 
 			afterEvaluate.run();
 		});
+	}
+
+	public static Provider<Boolean> getBooleanPropertyProvider(Project project, String key) {
+		return project.getProviders().gradleProperty(key).map(string -> {
+			try {
+				return Boolean.parseBoolean(string);
+			} catch (final IllegalArgumentException ex) {
+				return false;
+			}
+		});
+	}
+
+	public static boolean getBooleanProperty(Project project, String key) {
+		return getBooleanPropertyProvider(project, key).getOrElse(false);
 	}
 }
