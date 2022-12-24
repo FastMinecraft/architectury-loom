@@ -24,28 +24,32 @@
 
 package net.fabricmc.loom.task;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
-import javax.inject.Inject;
-
-import org.gradle.api.file.ConfigurableFileCollection;
-import org.gradle.api.file.RegularFileProperty;
-import org.gradle.api.tasks.InputFile;
-import org.gradle.api.tasks.InputFiles;
-import org.gradle.api.tasks.Internal;
-import org.gradle.api.tasks.JavaExec;
-import org.gradle.api.tasks.OutputFile;
-
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.extension.LoomFiles;
 import net.fabricmc.loom.util.Constants;
 
-public abstract class UnpickJarTask extends JavaExec {
+import org.gradle.api.DefaultTask;
+import org.gradle.api.file.ConfigurableFileCollection;
+import org.gradle.api.file.FileCollection;
+import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.tasks.*;
+import org.gradle.workers.WorkAction;
+import org.gradle.workers.WorkParameters;
+import org.gradle.workers.WorkQueue;
+import org.gradle.workers.WorkerExecutor;
+
+import javax.inject.Inject;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Set;
+
+public abstract class UnpickJarTask extends DefaultTask {
 	@InputFile
 	public abstract RegularFileProperty getInputJar();
 
@@ -63,46 +67,48 @@ public abstract class UnpickJarTask extends JavaExec {
 	public abstract RegularFileProperty getOutputJar();
 
 	@Inject
-	public UnpickJarTask() {
-		classpath(getProject().getConfigurations().getByName(Constants.Configurations.UNPICK_CLASSPATH));
-		getMainClass().set("daomephsta.unpick.cli.Main");
+	public abstract WorkerExecutor getWorkerExecutor();
 
+	@Inject
+	public UnpickJarTask() {
 		getConstantJar().setFrom(getProject().getConfigurations().getByName(Constants.Configurations.MAPPING_CONSTANTS));
 		getUnpickClasspath().setFrom(getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT_DEPENDENCIES));
 	}
 
-	@Override
+	@TaskAction
 	public void exec() {
-		fileArg(getInputJar().get().getAsFile(), getOutputJar().get().getAsFile(), getUnpickDefinitions().get().getAsFile());
-		fileArg(getConstantJar().getSingleFile());
-
-		// Classpath
-		for (Path minecraftJar : getExtension().getMinecraftJars(MappingsNamespace.NAMED)) {
-			fileArg(minecraftJar.toFile());
-		}
-
-		for (File file : getUnpickClasspath()) {
-			fileArg(file);
-		}
-
 		writeUnpickLogConfig();
-		systemProperty("java.util.logging.config.file", getDirectories().getUnpickLoggingConfigFile().getAbsolutePath());
 
-		super.exec();
+		WorkQueue workQueue = getWorkerExecutor().classLoaderIsolation(spec -> {
+			spec.getClasspath().from(getProject().getConfigurations().getByName(Constants.Configurations.UNPICK_CLASSPATH));
+		});
+
+		workQueue.submit(UnpickJarAction.class, params -> {
+			params.getInputJar().set(getInputJar());
+			params.getOutputJar().set(getOutputJar());
+			params.getUnpickDefinitions().set(getUnpickDefinitions());
+
+			params.getConstantJar().set(getConstantJar().getSingleFile());
+
+			for (Path minecraftJar : getExtension().getMinecraftJars(MappingsNamespace.NAMED)) {
+				params.getMinecraftJars().from(minecraftJar.toFile().getAbsoluteFile());
+			}
+
+			params.getUnpickClasspath().from(getUnpickClasspath());
+
+			params.getLoggingConfig().set(getDirectories().getUnpickLoggingConfigFile().getAbsoluteFile());
+		});
+
+		workQueue.await();
 	}
 
 	private void writeUnpickLogConfig() {
 		try (InputStream is = UnpickJarTask.class.getClassLoader().getResourceAsStream("unpick-logging.properties")) {
+			assert is != null;
 			Files.deleteIfExists(getDirectories().getUnpickLoggingConfigFile().toPath());
 			Files.copy(is, getDirectories().getUnpickLoggingConfigFile().toPath());
 		} catch (IOException e) {
 			throw new RuntimeException("Failed to copy unpick logging config", e);
-		}
-	}
-
-	private void fileArg(File... files) {
-		for (File file : files) {
-			args(file.getAbsolutePath());
 		}
 	}
 
@@ -113,5 +119,61 @@ public abstract class UnpickJarTask extends JavaExec {
 
 	private LoomFiles getDirectories() {
 		return getExtension().getFiles();
+	}
+
+	public interface UnpickJarParams extends WorkParameters {
+		RegularFileProperty getInputJar();
+
+		RegularFileProperty getOutputJar();
+
+		RegularFileProperty getUnpickDefinitions();
+
+		RegularFileProperty getConstantJar();
+
+		ConfigurableFileCollection getMinecraftJars();
+
+		ConfigurableFileCollection getUnpickClasspath();
+
+		RegularFileProperty getLoggingConfig();
+	}
+
+	public abstract static class UnpickJarAction implements WorkAction<UnpickJarParams> {
+		@Override
+		public void execute() {
+			Method mainMethod;
+
+			try {
+				Class<?> mainClass = Class.forName("daomephsta.unpick.cli.Main");
+				mainMethod = mainClass.getDeclaredMethod("main", String[].class);
+			} catch (ClassNotFoundException | NoSuchMethodException e) {
+				throw new RuntimeException(e);
+			}
+
+			UnpickJarParams params = getParameters();
+
+			System.setProperty("java.util.logging.config.file", params.getLoggingConfig().get().getAsFile().getAbsolutePath());
+
+			Set<File> minecraftJarFiles = params.getMinecraftJars().getFiles();
+			Set<File> unpickClasspathFiles = params.getUnpickClasspath().getFiles();
+			String[] args = new String[4 + minecraftJarFiles.size() + unpickClasspathFiles.size()];
+			args[0] = params.getInputJar().get().getAsFile().getAbsolutePath();
+			args[1] = params.getOutputJar().get().getAsFile().getAbsolutePath();
+			args[2] = params.getUnpickDefinitions().get().getAsFile().getAbsolutePath();
+			args[3] = params.getConstantJar().get().getAsFile().getAbsolutePath();
+
+			int i = 0;
+			for (File file : minecraftJarFiles) {
+				args[4 + i++] = file.getAbsolutePath();
+			}
+			for (File file : unpickClasspathFiles) {
+				args[4 + i++] = file.getAbsolutePath();
+			}
+
+			try {
+				mainMethod.invoke(null, (Object) args);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		}
 	}
 }
