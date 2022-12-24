@@ -195,7 +195,7 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 					decompilerOptions1.maxThreads(),
 					getParameters().getMappings().get().getAsFile().toPath(),
 					getLibraries(),
-					System.out::println,
+					(s) -> {},
 					decompilerOptions1.options()
 			);
 
