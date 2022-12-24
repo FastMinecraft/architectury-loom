@@ -3,14 +3,9 @@ plugins {
 	id 'maven-publish'
 	id 'java-gradle-plugin'
 	id 'idea'
-	id 'eclipse'
 	id 'groovy'
-	id 'checkstyle'
-	id 'jacoco'
-	id 'codenarc'
-	id "org.jetbrains.kotlin.jvm" version "1.6.10" // Must match the version included with gradle.
+	id "org.jetbrains.kotlin.jvm" version "1.6.21" // Must match the version included with gradle.
 	id "com.diffplug.spotless" version "6.8.0"
-	id "org.gradle.test-retry" version "1.4.1"
 }
 
 java {
@@ -23,7 +18,7 @@ tasks.withType(JavaCompile).configureEach {
 	it.options.encoding = "UTF-8"
 }
 
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
+tasks.withType(KotlinCompile).configureEach {
 	kotlinOptions {
 		jvmTarget = "17"
 	}
@@ -31,18 +26,8 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
 
 group = "dev.architectury"
 archivesBaseName = project.name
-def baseVersion = '1.0'
 
-def ENV = System.getenv()
-def runNumber = ENV.GITHUB_RUN_NUMBER ?: "9999"
-
-def isSnapshot = ENV.PR_NUM != null
-
-if (!isSnapshot) {
-	version = baseVersion + "." + runNumber
-} else {
-	version = baseVersion + "-PR." + ENV.PR_NUM + "." + runNumber
-}
+version = '1.0-SNAPSHOT'
 
 logger.lifecycle(":building plugin v${version}")
 
@@ -65,13 +50,6 @@ configurations {
 	compileClasspath.extendsFrom bootstrap
 	runtimeClasspath.extendsFrom bootstrap
 	testRuntimeClasspath.extendsFrom bootstrap
-}
-
-configurations.all {
-	resolutionStrategy {
-		// I am sorry, for now
-		// failOnNonReproducibleResolution()
-	}
 }
 
 dependencies {
@@ -120,7 +98,7 @@ dependencies {
 	}
 
 	// Kapt integration
-	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.7.22') // Must match the version included with gradle.
+	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.21') // Must match the version included with gradle.
 
 	// Forge patches
 	implementation('net.minecraftforge:installertools:1.2.0')
@@ -180,16 +158,6 @@ spotless {
 	}
 }
 
-checkstyle {
-	configFile = file('checkstyle.xml')
-	toolVersion = '10.3.1'
-}
-
-codenarc {
-	toolVersion = "3.1.0"
-	configFile = file("codenarc.groovy")
-}
-
 gradlePlugin {
 	plugins {
 		fabricLoom {
@@ -199,58 +167,27 @@ gradlePlugin {
 	}
 }
 
-jacoco {
-	toolVersion = "0.8.7"
-}
-
-// Run to get test coverage.
-jacocoTestReport {
-	dependsOn test
-	reports {
-		xml.required = false
-		csv.required = false
-		html.destination file("${buildDir}/jacocoHtml")
-	}
-}
-
 test {
-	maxHeapSize = "2560m"
+	maxHeapSize = "2048m"
 	useJUnitPlatform()
 
 	// Forward system prop onto tests.
 	if (System.getProperty("fabric.loom.test.homeDir")) {
 		systemProperty "fabric.loom.test.homeDir", System.getProperty("fabric.loom.test.homeDir")
 	}
-
-
-	if (ENV.CI) {
-		retry {
-			maxRetries = 3
-		}
-	}
 }
 
 import org.gradle.util.GradleVersion
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 
 publishing {
 	publications {
-		plugin(MavenPublication) { publication ->
-			groupId project.group
-			artifactId project.archivesBaseName
-			version project.version
-
-			from components.java
-		}
-
-		if (isSnapshot) return
-
 		mavenSnapshot(MavenPublication) { publication ->
 			groupId project.group
 			artifactId project.archivesBaseName
-			version baseVersion + '-SNAPSHOT'
 
 			from components.java
 		}
@@ -258,7 +195,6 @@ publishing {
 		pluginSnapshot(MavenPublication) {
 			groupId 'dev.architectury.loom'
 			artifactId 'dev.architectury.loom.gradle.plugin'
-			version baseVersion + '-SNAPSHOT'
 
 			pom.withXml {
 				// Based off org.gradle.plugin.devel.plugins.MavenPluginPublishPlugin
@@ -272,18 +208,6 @@ publishing {
 				artifactId.setTextContent(project.archivesBaseName)
 				Node version = dependency.appendChild(document.createElement('version'))
 				version.setTextContent(baseVersion + '-SNAPSHOT')
-			}
-		}
-	}
-
-	repositories {
-		if (ENV.MAVEN_PASS != null) {
-			maven {
-				url = "https://deploy.shedaniel.me/"
-				credentials {
-					username = "shedaniel"
-					password = ENV.MAVEN_PASS
-				}
 			}
 		}
 	}
@@ -368,22 +292,4 @@ task downloadGradleSources() {
 
 tasks.withType(GenerateModuleMetadata) {
 	enabled = false
-}
-
-task printActionsTestName(type: PrintActionsTestName) {
-}
-
-/**
- * Replaces invalid characters in test names for GitHub Actions artifacts.
- */
-class PrintActionsTestName extends DefaultTask {
-	@Input
-	@Option(option = "name", description = "The test name")
-	String testName
-
-	@TaskAction
-	def run() {
-		def sanitised = testName.replace('*', '_')
-		println "::set-output name=test::$sanitised"
-	}
 }
