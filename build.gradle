@@ -207,7 +207,7 @@ publishing {
 				Node artifactId = dependency.appendChild(document.createElement('artifactId'))
 				artifactId.setTextContent(project.archivesBaseName)
 				Node version = dependency.appendChild(document.createElement('version'))
-				version.setTextContent(baseVersion + '-SNAPSHOT')
+				version.setTextContent(version)
 			}
 		}
 	}
