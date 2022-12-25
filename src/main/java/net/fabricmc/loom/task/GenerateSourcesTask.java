@@ -123,7 +123,7 @@ public abstract class GenerateSourcesTask extends AbstractLoomTask {
 	}
 
 	private void doWork() {
-		WorkQueue workQueue = getWorkerExecutor().classLoaderIsolation(spec -> spec.getClasspath().from(getClasspath()));
+		WorkQueue workQueue = getWorkerExecutor().noIsolation();
 
 		workQueue.submit(DecompileAction.class, params -> {
 			params.getDecompilerOptions().set(decompilerOptions.toDto());
