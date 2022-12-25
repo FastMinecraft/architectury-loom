@@ -221,7 +221,7 @@ public class CFRObfuscationMapping extends NullMapping {
 		private boolean isRecord(JavaTypeInstance javaTypeInstance) {
 			if (javaTypeInstance instanceof JavaRefTypeInstance) {
 				ClassFile classFile = ((JavaRefTypeInstance) javaTypeInstance).getClassFile();
-				return classFile.getClassSignature().getSuperClass().getRawName().equals("java.lang.Record");
+				return classFile.getClassSignature().superClass().getRawName().equals("java.lang.Record");
 			}
 
 			return false;

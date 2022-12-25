@@ -34,10 +34,13 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import com.google.common.base.Charsets;
+import it.unimi.dsi.fastutil.objects.ObjectList;
+import it.unimi.dsi.fastutil.objects.ObjectLists;
 import org.benf.cfr.reader.api.OutputSinkFactory;
 import org.benf.cfr.reader.api.SinkReturns;
 import org.slf4j.Logger;
@@ -51,7 +54,7 @@ public class CFRSinkFactory implements OutputSinkFactory {
 	private final JarOutputStream outputStream;
 	private final IOStringConsumer logger;
 	private final Set<String> addedDirectories = new HashSet<>();
-	private final Map<String, Map<Integer, Integer>> lineMap = new TreeMap<>();
+	private final Map<String, Map<Integer, Integer>> lineMap = new ConcurrentSkipListMap<>();
 
 	public CFRSinkFactory(JarOutputStream outputStream, IOStringConsumer logger) {
 		this.outputStream = outputStream;
@@ -59,11 +62,11 @@ public class CFRSinkFactory implements OutputSinkFactory {
 	}
 
 	@Override
-	public List<SinkClass> getSupportedSinks(SinkType sinkType, Collection<SinkClass> available) {
+	public ObjectList<SinkClass> getSupportedSinks(SinkType sinkType, Collection<SinkClass> available) {
 		return switch (sinkType) {
-		case JAVA -> Collections.singletonList(SinkClass.DECOMPILED);
-		case LINENUMBER -> Collections.singletonList(SinkClass.LINE_NUMBER_MAPPING);
-		default -> Collections.emptyList();
+		case JAVA -> ObjectLists.singleton(SinkClass.DECOMPILED);
+		case LINENUMBER -> ObjectLists.singleton(SinkClass.LINE_NUMBER_MAPPING);
+		default -> ObjectLists.emptyList();
 		};
 	}
 
@@ -106,7 +109,7 @@ public class CFRSinkFactory implements OutputSinkFactory {
 
 				if (srcLineNumber == null || dstLineNumber == null) continue;
 
-				lineMap.computeIfAbsent(className, (c) -> new TreeMap<>()).put(srcLineNumber, dstLineNumber);
+				lineMap.computeIfAbsent(className, (c) -> new ConcurrentSkipListMap<>()).put(srcLineNumber, dstLineNumber);
 			}
 		};
 	}

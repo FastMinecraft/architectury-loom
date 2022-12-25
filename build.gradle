@@ -32,6 +32,7 @@ version = '1.0-SNAPSHOT'
 logger.lifecycle(":building plugin v${version}")
 
 repositories {
+	mavenLocal()
 	mavenCentral()
 	maven { url "https://maven.fabricmc.net/" }
 	maven { url "https://maven.architectury.dev/" }
@@ -86,8 +87,9 @@ dependencies {
 	implementation("dev.architectury:refmap-remapper:1.0.5")
 
 	// decompilers
-	implementation('net.fabricmc:fabric-fernflower:1.5.0')
-	implementation('net.fabricmc:cfr:0.1.1')
+	implementation('net.fabricmc:fabric-fernflower:2.0.0')
+	implementation('net.fabricmc:cfr:0.2-SNAPSHOT')
+	implementation('it.unimi.dsi:fastutil:8.5.11')
 
 	// source code remapping
 	implementation('dev.architectury:mercury:0.1.1.11')
