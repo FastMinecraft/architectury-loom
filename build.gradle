@@ -33,8 +33,8 @@ version = '1.0-SNAPSHOT'
 logger.lifecycle(":building plugin v${version}")
 
 repositories {
-	mavenLocal()
 	mavenCentral()
+	maven { url "https://maven.fastmc.dev/" }
 	maven { url "https://maven.fabricmc.net/" }
 	maven { url "https://maven.architectury.dev/" }
 	maven {
