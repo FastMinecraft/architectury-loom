@@ -152,18 +152,6 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	@Input
 	public abstract Property<Boolean> getInjectAccessWidener();
 
-	/**
-	 * Gets the jar paths to the access wideners that will be converted to ATs for Forge runtime.
-	 * If you specify multiple files, they will be merged into one.
-	 *
-	 * <p>The specified files will be converted and removed from the final jar.
-	 *
-	 * @return the property containing access widener paths in the final jar
-	 */
-	@Input
-	@ApiStatus.Internal
-	public abstract Property<Boolean> getUseMixinAP();
-
 	private final Supplier<TinyRemapperService> tinyRemapperService = Suppliers.memoize(() -> TinyRemapperService.getOrCreate(this));
 
 	@Inject
