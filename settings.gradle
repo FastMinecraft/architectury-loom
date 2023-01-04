@@ -1,2 +1,9 @@
+pluginManagement {
+	repositories {
+		gradlePluginPortal()
+		maven { url "https://maven.fastmc.dev/" }
+	}
+}
+
 rootProject.name = "architectury-loom"
 include "bootstrap"
