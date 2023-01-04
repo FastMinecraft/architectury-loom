@@ -266,3 +266,5 @@ task downloadGradleSources() {
 tasks.withType(GenerateModuleMetadata) {
 	enabled = false
 }
+
+tasks.test.enabled = System.getProperty("run_test") == "true"
