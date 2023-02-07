@@ -27,6 +27,8 @@ package net.fabricmc.loom.util.service;
 import java.io.IOException;
 import java.lang.ref.SoftReference;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,9 +43,9 @@ import org.gradle.api.invocation.Gradle;
  * This is a basic replacement for gradle's build service api.
  */
 public final class SharedServiceManager {
-	private static final Map<Gradle, SharedServiceManager> SERVICE_FACTORY_MAP = new ConcurrentHashMap<>();
-	private final Gradle gradle;
+	private static final Map<Gradle, SharedServiceManager> SERVICE_FACTORY_MAP = Collections.synchronizedMap(new HashMap<>());
 
+	private final Gradle gradle;
 	private final Map<String, SoftReference<SharedService>> sharedServiceMap = new ConcurrentHashMap<>();
 
 	private boolean shutdown = false;

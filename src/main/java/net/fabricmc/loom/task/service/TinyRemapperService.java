@@ -52,7 +52,7 @@ import net.fabricmc.loom.util.service.SharedService;
 import net.fabricmc.loom.util.service.SharedServiceManager;
 
 public class TinyRemapperService implements SharedService {
-	public static synchronized TinyRemapperService getOrCreate(AbstractRemapJarTask remapJarTask) {
+	public static TinyRemapperService getOrCreate(AbstractRemapJarTask remapJarTask) {
 		final Project project = remapJarTask.getProject();
 		final String to = remapJarTask.getTargetNamespace().get();
 		final String from = remapJarTask.getSourceNamespace().get();
@@ -127,15 +127,17 @@ public class TinyRemapperService implements SharedService {
 		cleanable = CLEANER.register(this, new CleanState(tinyRemapper, kotlinRemapperClassloader));
 	}
 
-	public synchronized InputTag getOrCreateTag(Path file) {
-		InputTag tag = inputTagMap.get(file.toAbsolutePath().toString());
+	public InputTag getOrCreateTag(Path file) {
+		synchronized (this) {
+			InputTag tag = inputTagMap.get(file.toAbsolutePath().toString());
 
-		if (tag == null) {
-			tag = tinyRemapper.createInputTag();
-			inputTagMap.put(file.toAbsolutePath().toString(), tag);
+			if (tag == null) {
+				tag = tinyRemapper.createInputTag();
+				inputTagMap.put(file.toAbsolutePath().toString(), tag);
+			}
+
+			return tag;
 		}
-
-		return tag;
 	}
 
 	public TinyRemapper getTinyRemapperForRemapping() {
@@ -145,7 +147,7 @@ public class TinyRemapperService implements SharedService {
 		}
 	}
 
-	public synchronized TinyRemapper getTinyRemapperForInputs() {
+	public TinyRemapper getTinyRemapperForInputs() {
 		synchronized (this) {
 			if (isRemapping) {
 				throw new IllegalStateException("Cannot read inputs as remapping has already started");
