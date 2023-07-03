@@ -59,9 +59,9 @@ import org.jetbrains.annotations.Nullable;
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.task.RemapTaskConfiguration;
-import net.fabricmc.loom.util.ModUtils;
 import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.ZipUtils;
+import net.fabricmc.loom.util.fmj.FabricModJsonFactory;
 
 public final class IncludedJarFactory {
 	private final Project project;
@@ -168,7 +168,7 @@ public final class IncludedJarFactory {
 	}
 
 	private File getNestableJar(final File input, final Metadata metadata) {
-		if (ModUtils.isMod(input, LoomGradleExtension.get(project).getPlatform().get())) {
+		if (FabricModJsonFactory.isModJar(input, LoomGradleExtension.get(project).getPlatform().get())) {
 			// Input is a mod, nothing needs to be done.
 			return input;
 		}

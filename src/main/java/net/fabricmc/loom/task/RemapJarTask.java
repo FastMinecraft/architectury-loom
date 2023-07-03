@@ -24,50 +24,38 @@
 
 package net.fabricmc.loom.task;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.Serializable;
-import java.io.UncheckedIOException;
-import java.io.Writer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.FileSystem;
 import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
-import java.util.jar.Attributes;
-import java.util.jar.JarFile;
-import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 import javax.inject.Inject;
 
 import com.google.common.base.Suppliers;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import dev.architectury.loom.extensions.ModBuildExtensions;
 import dev.architectury.tinyremapper.OutputConsumerPath;
 import dev.architectury.tinyremapper.TinyRemapper;
-import org.cadixdev.at.AccessTransformSet;
-import org.cadixdev.at.io.AccessTransformFormats;
-import org.cadixdev.lorenz.MappingSet;
+
+import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
+
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.provider.Provider;
@@ -79,7 +67,6 @@ import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.TaskDependency;
 import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,29 +74,24 @@ import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerWriter;
 import net.fabricmc.loom.LoomGradleExtension;
-import net.fabricmc.loom.LoomGradlePlugin;
-import net.fabricmc.loom.build.MixinRefmapHelper;
 import net.fabricmc.loom.build.nesting.IncludedJarFactory;
 import net.fabricmc.loom.build.nesting.IncludedJarFactory.LazyNestedFile;
 import net.fabricmc.loom.build.nesting.IncludedJarFactory.NestedFile;
 import net.fabricmc.loom.build.nesting.JarNester;
 import net.fabricmc.loom.configuration.accesswidener.AccessWidenerFile;
-import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.extension.MixinExtension;
 import net.fabricmc.loom.task.service.MappingsService;
 import net.fabricmc.loom.task.service.TinyRemapperService;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.ExceptionUtil;
-import net.fabricmc.loom.util.FileSystemUtil;
-import net.fabricmc.loom.util.LfWriter;
 import net.fabricmc.loom.util.ModPlatform;
-import net.fabricmc.loom.util.ModUtils;
 import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.SidedClassVisitor;
 import net.fabricmc.loom.util.ZipUtils;
-import net.fabricmc.loom.util.aw2at.Aw2At;
+import net.fabricmc.loom.util.fmj.FabricModJson;
+import net.fabricmc.loom.util.fmj.FabricModJsonFactory;
+import net.fabricmc.loom.util.service.BuildSharedServiceManager;
 import net.fabricmc.loom.util.service.UnsafeWorkQueueHelper;
-import net.fabricmc.lorenztiny.TinyMappingsReader;
 
 public abstract class RemapJarTask extends AbstractRemapJarTask {
 	@InputFiles
@@ -152,18 +134,21 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	@Input
 	public abstract Property<Boolean> getInjectAccessWidener();
 
-	private Supplier<TinyRemapperService> tinyRemapperService = Suppliers.memoize(() -> TinyRemapperService.getOrCreate(this));
+	@Input
+	@ApiStatus.Internal
+	public abstract Property<Boolean> getUseMixinAP();
+
+	private final Provider<BuildSharedServiceManager> serviceManagerProvider;
+
+	private Supplier<TinyRemapperService> tinyRemapperService;
 
 	@Inject
 	public RemapJarTask() {
 		super();
+		serviceManagerProvider = BuildSharedServiceManager.createForTask(this, getBuildEventsListenerRegistry());
+		tinyRemapperService = Suppliers.memoize(() -> TinyRemapperService.getOrCreate(serviceManagerProvider.get().get(), this));
 
-		// Lazy provider because the configuration is not yet registered at this point
-		getClasspath().from(getProject().provider(() -> {
-			String sourceSetName = MinecraftSourceSets.get(getProject()).getCombinedSourceSetName();
-			// Use copy to avoid inherited configuration (Minecraft libraries)
-			return getProject().getConfigurations().getByName(sourceSetName).copy();
-		}));
+		getClasspath().from(getProject().getConfigurations().getByName(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME));
 		getClasspath().from(getProject().getConfigurations().getByName("modCompileClasspath"));
 
 		getAddNestedDependencies().convention(true).finalizeValueOnRead();
@@ -184,6 +169,8 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			}));
 			getNestedJars().builtBy(forgeNestedJars.map(Pair::right));
 		}
+
+		getUseMixinAP().set(LoomGradleExtension.get(getProject()).getMixin().getUseLegacyMixinAp());
 
 		if (getLoomExtension().multiProjectOptimisation()) {
 			setupPreparationTask();
@@ -221,16 +208,14 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 			Supplier<TinyRemapperService> temp = tinyRemapperService;
 			tinyRemapperService = null; // Release the strong reference
-			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), temp.get()));
-
+			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(temp.get()));
 			params.getRemapClasspath().from(getClasspath());
-
 			params.getMultiProjectOptimisation().set(getLoomExtension().multiProjectOptimisation());
 
-			final boolean legacyMixin = extension.getMixin().getUseLegacyMixinAp().get();
-			params.getUseMixinExtension().set(!legacyMixin);
+			final boolean mixinAp = getUseMixinAP().get();
+			params.getUseMixinExtension().set(!mixinAp);
 
-			if (legacyMixin) {
+			if (mixinAp) {
 				setupLegacyMixinRefmapRemapping(params);
 			} else if (extension.isForge()) {
 				throw new RuntimeException("Forge must have useLegacyMixinAp enabled");
@@ -246,7 +231,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			params.getAtAccessWideners().set(getAtAccessWideners());
 
 			if (!getAtAccessWideners().get().isEmpty()) {
-				params.getMappingBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), MappingsService.createDefault(getProject(), getSourceNamespace().get(), getTargetNamespace().get())));
+				params.getMappingBuildServiceUuid().set(UnsafeWorkQueueHelper.create(MappingsService.createDefault(getProject(), serviceManagerProvider.get().get(), getSourceNamespace().get(), getTargetNamespace().get())));
 			}
 		});
 	}
@@ -254,53 +239,20 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	private void setupLegacyMixinRefmapRemapping(RemapParams params) {
 		final LoomGradleExtension extension = LoomGradleExtension.get(getProject());
 		final MixinExtension mixinExtension = extension.getMixin();
-		Collection<String> allMixinConfigs = null;
 
-		final JsonObject fabricModJson = extension.getPlatform().get() == ModPlatform.FABRIC ? ModUtils.getFabricModJson(getInputFile().getAsFile().get().toPath()) : null;
+		final Collection<String> allMixinConfigs = new LinkedHashSet<>();
+		final FabricModJson fabricModJson = FabricModJsonFactory.createFromZipNullable(getInputFile().getAsFile().get().toPath());
 
-		if (fabricModJson == null) {
-			if (extension.getPlatform().get() == ModPlatform.QUILT) {
-				try {
-					byte[] bytes = ZipUtils.unpackNullable(getInputFile().getAsFile().get().toPath(), "quilt.mod.json");
+		if (fabricModJson != null) {
+			allMixinConfigs.addAll(fabricModJson.getMixinConfigurations());
+		}
 
-					if (bytes != null) {
-						JsonObject json = LoomGradlePlugin.GSON.fromJson(new InputStreamReader(new ByteArrayInputStream(bytes)), JsonObject.class);
-						JsonElement mixins = json.has("mixin") ? json.get("mixin") : json.get("mixins");
+		if (getReadMixinConfigsFromManifest().get()) {
+			allMixinConfigs.addAll(ModBuildExtensions.readMixinConfigsFromManifest(getInputFile().get().getAsFile()));
+		}
 
-						if (mixins != null) {
-							if (mixins.isJsonPrimitive()) {
-								allMixinConfigs = Collections.singletonList(mixins.getAsString());
-							} else if (mixins.isJsonArray()) {
-								allMixinConfigs = StreamSupport.stream(mixins.getAsJsonArray().spliterator(), false)
-										.map(JsonElement::getAsString)
-										.collect(Collectors.toList());
-							} else {
-								throw new RuntimeException("Unknown mixin type: " + mixins.getClass().getName());
-							}
-						} else {
-							allMixinConfigs = Collections.emptyList();
-						}
-					}
-				} catch (IOException e) {
-					throw new RuntimeException("Cannot read file quilt.mod.json in the jar.", e);
-				}
-			}
-
-			if (allMixinConfigs == null && getReadMixinConfigsFromManifest().get()) {
-				allMixinConfigs = readMixinConfigsFromManifest();
-			}
-
-			if (allMixinConfigs == null) {
-				if (extension.getPlatform().get() == ModPlatform.QUILT) {
-					getProject().getLogger().warn("Could not find quilt.mod.json file in: " + getInputFile().getAsFile().get().getName());
-					return;
-				}
-
-				getProject().getLogger().warn("Could not find fabric.mod.json file in: " + getInputFile().getAsFile().get().getName());
-				return;
-			}
-		} else {
-			allMixinConfigs = MixinRefmapHelper.getMixinConfigurationFiles(fabricModJson);
+		if (allMixinConfigs.isEmpty()) {
+			return;
 		}
 
 		for (SourceSet sourceSet : mixinExtension.getMixinSourceSets()) {
@@ -320,27 +272,6 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 					.toList();
 
 			params.getMixinData().add(new RemapParams.RefmapData(mixinConfigs, refmapName));
-		}
-	}
-
-	private Collection<String> readMixinConfigsFromManifest() {
-		File inputJar = getInputFile().get().getAsFile();
-
-		try (JarFile jar = new JarFile(inputJar)) {
-			@Nullable Manifest manifest = jar.getManifest();
-
-			if (manifest != null) {
-				Attributes attributes = manifest.getMainAttributes();
-				String mixinConfigs = attributes.getValue(Constants.Forge.MIXIN_CONFIGS_MANIFEST_KEY);
-
-				if (mixinConfigs != null) {
-					return Set.of(mixinConfigs.split(","));
-				}
-			}
-
-			return Set.of();
-		} catch (IOException e) {
-			throw new UncheckedIOException("Could not read mixin configs from input jar", e);
 		}
 	}
 
@@ -400,7 +331,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 				addRefmaps();
 				addNestedJars();
-				convertAwToAt();
+				ModBuildExtensions.convertAwToAt(getParameters().getAtAccessWideners(), outputFile, getParameters().getMappingBuildServiceUuid());
 
 				if (getParameters().getPlatform().get() != ModPlatform.FORGE) {
 					modifyJarManifest();
@@ -485,55 +416,6 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			ZipUtils.replace(outputFile, accessWidenerFile.path(), remapped);
 		}
 
-		private void convertAwToAt() throws IOException {
-			if (!this.getParameters().getAtAccessWideners().isPresent()) {
-				return;
-			}
-
-			Set<String> atAccessWideners = this.getParameters().getAtAccessWideners().get();
-
-			if (atAccessWideners.isEmpty()) {
-				return;
-			}
-
-			AccessTransformSet at = AccessTransformSet.create();
-			File jar = outputFile.toFile();
-
-			try (FileSystemUtil.Delegate fileSystem = FileSystemUtil.getJarFileSystem(jar, false)) {
-				FileSystem fs = fileSystem.get();
-				Path atPath = fs.getPath(Constants.Forge.ACCESS_TRANSFORMER_PATH);
-
-				if (Files.exists(atPath)) {
-					throw new FileAlreadyExistsException("Jar " + jar + " already contains an access transformer - cannot convert AWs!");
-				}
-
-				for (String aw : atAccessWideners) {
-					Path awPath = fs.getPath(aw);
-
-					if (Files.notExists(awPath)) {
-						throw new NoSuchFileException("Could not find AW '" + aw + "' to convert into AT!");
-					}
-
-					try (BufferedReader reader = Files.newBufferedReader(awPath, StandardCharsets.UTF_8)) {
-						at.merge(Aw2At.toAccessTransformSet(reader));
-					}
-
-					Files.delete(awPath);
-				}
-
-				MappingsService service = UnsafeWorkQueueHelper.get(getParameters().getMappingBuildServiceUuid(), MappingsService.class);
-
-				try (TinyMappingsReader reader = new TinyMappingsReader(service.getMemoryMappingTree(), service.getFromNamespace(), service.getToNamespace())) {
-					MappingSet mappingSet = reader.read();
-					at = at.remap(mappingSet);
-				}
-
-				try (Writer writer = new LfWriter(Files.newBufferedWriter(atPath))) {
-					AccessTransformFormats.FML.write(writer, at);
-				}
-			}
-		}
-
 		private byte[] remapAccessWidener(byte[] input) {
 			int version = AccessWidenerReader.readVersion(input);
 
@@ -582,9 +464,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	}
 
 	@Override
-	protected List<String> getClientOnlyEntries() {
-		final SourceSet clientSourceSet = MinecraftSourceSets.Split.getClientSourceSet(getProject());
-
+	protected List<String> getClientOnlyEntries(SourceSet clientSourceSet) {
 		final ConfigurableFileCollection output = getProject().getObjects().fileCollection();
 		output.from(clientSourceSet.getOutput().getClassesDirs());
 		output.from(clientSourceSet.getOutput().getResourcesDir());
@@ -601,6 +481,6 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 	@Internal
 	public TinyRemapperService getTinyRemapperService() {
-		return tinyRemapperService.get();
+		return TinyRemapperService.getOrCreate(serviceManagerProvider.get().get(), this);
 	}
 }

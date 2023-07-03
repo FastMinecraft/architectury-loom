@@ -25,19 +25,18 @@
 package net.fabricmc.loom.configuration.mods;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import org.objectweb.asm.commons.Remapper;
 
 import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerWriter;
-import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
-import net.fabricmc.loom.util.ZipUtils;
+import net.fabricmc.loom.util.ModPlatform;
+import net.fabricmc.loom.util.fmj.FabricModJson;
+import net.fabricmc.loom.util.fmj.FabricModJsonFactory;
 
 public class AccessWidenerUtils {
 	/**
@@ -58,48 +57,25 @@ public class AccessWidenerUtils {
 		return writer.write();
 	}
 
-	public static AccessWidenerData readAccessWidenerData(Path inputJar) throws IOException {
-		String fieldName = "accessWidener";
-		byte[] modJsonBytes = ZipUtils.unpackNullable(inputJar, "fabric.mod.json");
-
-		if (modJsonBytes == null) {
-			modJsonBytes = ZipUtils.unpackNullable(inputJar, "architectury.common.json");
-
-			if (modJsonBytes == null) {
-				modJsonBytes = ZipUtils.unpackNullable(inputJar, "quilt.mod.json");
-
-				if (modJsonBytes != null) {
-					fieldName = "access_widener";
-				} else {
-					// No access widener data
-					// We can just ignore in architectury
-					return null;
-				}
-			}
-		}
-
-		JsonObject jsonObject = LoomGradlePlugin.GSON.fromJson(new String(modJsonBytes, StandardCharsets.UTF_8), JsonObject.class);
-
-		if (!jsonObject.has(fieldName)) {
+	public static AccessWidenerData readAccessWidenerData(Path inputJar, ModPlatform platform) throws IOException {
+		if (!FabricModJsonFactory.isModJar(inputJar, platform)) {
 			return null;
 		}
 
-		String accessWidenerPath;
+		final FabricModJson fabricModJson = FabricModJsonFactory.createFromZip(inputJar);
+		final List<String> classTweakers = List.copyOf(fabricModJson.getClassTweakers().keySet());
 
-		if (fieldName.equals("access_widener") && jsonObject.get(fieldName).isJsonArray()) {
-			JsonArray array = jsonObject.get(fieldName).getAsJsonArray();
-
-			if (array.size() != 1) {
-				throw new UnsupportedOperationException("Loom does not support multiple access wideners in one mod!");
-			}
-
-			accessWidenerPath = array.get(0).getAsString();
-		} else {
-			accessWidenerPath = jsonObject.get(fieldName).getAsString();
+		if (classTweakers.isEmpty()) {
+			return null;
 		}
 
-		byte[] accessWidener = ZipUtils.unpack(inputJar, accessWidenerPath);
-		AccessWidenerReader.Header header = AccessWidenerReader.readHeader(accessWidener);
+		if (classTweakers.size() != 1) {
+			throw new UnsupportedOperationException("TODO: support multiple class tweakers");
+		}
+
+		final String accessWidenerPath = classTweakers.get(0);
+		final byte[] accessWidener = fabricModJson.getSource().read(accessWidenerPath);
+		final AccessWidenerReader.Header header = AccessWidenerReader.readHeader(accessWidener);
 
 		return new AccessWidenerData(accessWidenerPath, header, accessWidener);
 	}

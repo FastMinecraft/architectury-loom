@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021-2022 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -44,6 +44,7 @@ import org.jetbrains.annotations.ApiStatus;
 import net.fabricmc.loom.api.decompilers.DecompilerOptions;
 import net.fabricmc.loom.api.mappings.intermediate.IntermediateMappingsProvider;
 import net.fabricmc.loom.api.mappings.layered.spec.LayeredMappingSpecBuilder;
+import net.fabricmc.loom.api.processor.MinecraftJarProcessor;
 import net.fabricmc.loom.configuration.ide.RunConfig;
 import net.fabricmc.loom.configuration.ide.RunConfigSettings;
 import net.fabricmc.loom.configuration.processors.JarProcessor;
@@ -66,11 +67,17 @@ public interface LoomGradleExtensionAPI {
 
 	void decompilers(Action<NamedDomainObjectContainer<DecompilerOptions>> action);
 
+	@Deprecated()
 	ListProperty<JarProcessor> getGameJarProcessors();
 
+	@Deprecated()
 	default void addJarProcessor(JarProcessor processor) {
 		getGameJarProcessors().add(processor);
 	}
+
+	ListProperty<MinecraftJarProcessor<?>> getMinecraftJarProcessors();
+
+	void addMinecraftJarProcessor(Class<? extends MinecraftJarProcessor<?>> clazz, Object... parameters);
 
 	ConfigurableFileCollection getLog4jConfigs();
 
@@ -81,6 +88,14 @@ public interface LoomGradleExtensionAPI {
 	void runs(Action<NamedDomainObjectContainer<RunConfigSettings>> action);
 
 	NamedDomainObjectContainer<RunConfigSettings> getRunConfigs();
+
+	/**
+	 * {@return the value of {@link #getRunConfigs}}
+	 * This is an alias for it that matches {@link #runs}.
+	 */
+	default NamedDomainObjectContainer<RunConfigSettings> getRuns() {
+		return getRunConfigs();
+	}
 
 	void mixin(Action<MixinExtensionAPI> action);
 
@@ -103,7 +118,7 @@ public interface LoomGradleExtensionAPI {
 	}
 
 	default List<RemapConfigurationSettings> getRuntimeRemapConfigurations() {
-		return getRemapConfigurations().stream().filter(element -> element.getOnCompileClasspath().get()).toList();
+		return getRemapConfigurations().stream().filter(element -> element.getOnRuntimeClasspath().get()).toList();
 	}
 
 	@ApiStatus.Experimental

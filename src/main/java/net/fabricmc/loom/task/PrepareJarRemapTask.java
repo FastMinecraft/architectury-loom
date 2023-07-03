@@ -28,7 +28,6 @@ import java.nio.file.Path;
 
 import javax.inject.Inject;
 
-import dev.architectury.tinyremapper.TinyRemapper;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.InputFile;
@@ -58,14 +57,12 @@ public abstract class PrepareJarRemapTask extends AbstractLoomTask {
 		getOutputs().upToDateWhen((o) -> false);
 
 		getProject().getGradle().allprojects(project -> {
-			project.getTasks().configureEach(task -> {
-				if (task instanceof PrepareJarRemapTask otherTask) {
-					if (otherTask == this) return;
+			project.getTasks().withType(PrepareJarRemapTask.class, otherTask -> {
+				if (otherTask == this) return;
 
-					// Ensure that all other prepare tasks inputs have completed
-					dependsOn(otherTask.getInputs());
-					mustRunAfter(otherTask.getInputs());
-				}
+				// Ensure that all other prepare tasks inputs have completed
+				dependsOn(otherTask.getInputs());
+				mustRunAfter(otherTask.getInputs());
 			});
 		});
 	}
@@ -78,7 +75,7 @@ public abstract class PrepareJarRemapTask extends AbstractLoomTask {
 		final WorkQueue workQueue = getWorkerExecutor().noIsolation();
 
 		workQueue.submit(ReadInputsAction.class, params -> {
-			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), remapJarTask.getTinyRemapperService()));
+			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(remapJarTask.getTinyRemapperService()));
 			params.getInputFile().set(getInputFile());
 		});
 	}
@@ -103,6 +100,6 @@ public abstract class PrepareJarRemapTask extends AbstractLoomTask {
 	}
 
 	static void prepare(TinyRemapperService tinyRemapperService, Path inputFile) {
-		tinyRemapperService.getTinyRemapperForInputs().readInputsAsync(tinyRemapperService.getOrCreateTag(inputFile), inputFile);
+		tinyRemapperService.getTinyRemapperForInputs().readInputs(tinyRemapperService.getOrCreateTag(inputFile), inputFile);
 	}
 }

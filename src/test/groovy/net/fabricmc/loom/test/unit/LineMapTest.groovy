@@ -24,10 +24,11 @@
 
 package net.fabricmc.loom.test.unit
 
+import spock.lang.Specification
+
 import net.fabricmc.loom.decompilers.linemap.LineMapClassFilter
 import net.fabricmc.loom.decompilers.linemap.LineMapReader
 import net.fabricmc.loom.decompilers.linemap.LineMapWriter
-import spock.lang.Specification
 
 class LineMapTest extends Specification {
 	LineMapReader reader = new LineMapReader(LineMapTest.getResourceAsStream('/linemap/input.lmap').newReader('UTF-8'))
@@ -40,20 +41,20 @@ class LineMapTest extends Specification {
 
 	def "roundtrip"() {
 		when:
-			def sw = new StringWriter()
-			reader.accept(new LineMapWriter(sw))
-			reader.close()
+		def sw = new StringWriter()
+		reader.accept(new LineMapWriter(sw))
+		reader.close()
 		then:
-			sw.toString() == readExpected('simpleOutput')
+		sw.toString() == readExpected('simpleOutput')
 	}
 
 	def "filter"() {
 		when:
-			def sw = new StringWriter()
-			def writer = new LineMapWriter(sw)
-			reader.accept(new LineMapClassFilter(writer, { it.startsWith('test/nested/') }))
-			reader.close()
+		def sw = new StringWriter()
+		def writer = new LineMapWriter(sw)
+		reader.accept(new LineMapClassFilter(writer, { it.startsWith('test/nested/') }))
+		reader.close()
 		then:
-			sw.toString() == readExpected('filteredOutput')
+		sw.toString() == readExpected('filteredOutput')
 	}
 }

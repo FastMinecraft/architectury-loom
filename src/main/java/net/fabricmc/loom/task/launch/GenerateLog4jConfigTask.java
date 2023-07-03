@@ -29,6 +29,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import dev.architectury.loom.util.ForgeLoggerConfig;
 import org.gradle.api.tasks.TaskAction;
 
 import net.fabricmc.loom.task.AbstractLoomTask;
@@ -37,6 +38,11 @@ public abstract class GenerateLog4jConfigTask extends AbstractLoomTask {
 	@TaskAction
 	public void run() {
 		Path outputFile = getExtension().getFiles().getDefaultLog4jConfigFile().toPath();
+
+		if (getExtension().isForge() && getExtension().getForge().getUseForgeLoggerConfig().get()) {
+			ForgeLoggerConfig.copyToPath(getProject(), outputFile);
+			return;
+		}
 
 		try (InputStream is = GenerateLog4jConfigTask.class.getClassLoader().getResourceAsStream("log4j2.fabric.xml")) {
 			Files.deleteIfExists(outputFile);

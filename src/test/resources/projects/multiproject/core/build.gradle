@@ -1,4 +1,10 @@
-archivesBaseName = "core"
+base {
+	archivesName = "core"
+}
+
+loom {
+	accessWidenerPath = file("src/main/resources/core.accesswidener")
+}
 
 dependencies {
 	// An example api dep to be used by the other sub project.

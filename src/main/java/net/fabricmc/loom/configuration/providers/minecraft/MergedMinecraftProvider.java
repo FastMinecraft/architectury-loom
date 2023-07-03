@@ -31,15 +31,13 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 
-import org.gradle.api.Project;
-
-import net.fabricmc.stitch.merge.JarMerger;
+import net.fabricmc.loom.configuration.ConfigContext;
 
 public class MergedMinecraftProvider extends MinecraftProvider {
 	private Path minecraftMergedJar;
 
-	public MergedMinecraftProvider(Project project) {
-		super(project);
+	public MergedMinecraftProvider(ConfigContext configContext) {
+		super(configContext);
 	}
 
 	@Override
@@ -87,7 +85,7 @@ public class MergedMinecraftProvider extends MinecraftProvider {
 
 		Objects.requireNonNull(jarToMerge, "Cannot merge null input jar?");
 
-		try (JarMerger jarMerger = new JarMerger(getMinecraftClientJar(), jarToMerge, minecraftMergedJar.toFile())) {
+		try (var jarMerger = new MinecraftJarMerger(getMinecraftClientJar(), jarToMerge, minecraftMergedJar.toFile())) {
 			jarMerger.enableSyntheticParamsOffset();
 			jarMerger.merge();
 		}

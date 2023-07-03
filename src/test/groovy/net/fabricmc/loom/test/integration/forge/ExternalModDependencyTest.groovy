@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2022 FabricMC
+ * Copyright (c) 2022-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,21 +24,27 @@
 
 package net.fabricmc.loom.test.integration.forge
 
-import net.fabricmc.loom.test.util.GradleProjectTestTrait
 import spock.lang.Specification
+import spock.lang.Unroll
 
-import static net.fabricmc.loom.test.LoomTestConstants.DEFAULT_GRADLE
+import net.fabricmc.loom.test.util.GradleProjectTestTrait
+
+import static net.fabricmc.loom.test.LoomTestConstants.STANDARD_TEST_VERSIONS
 import static org.gradle.testkit.runner.TaskOutcome.SUCCESS
 
 class ExternalModDependencyTest extends Specification implements GradleProjectTestTrait {
-    def "build"() {
-        setup:
-        	def gradle = gradleProject(project: "forge/externalModDependency", version: DEFAULT_GRADLE)
+	@Unroll
+	def "build (gradle #version)"() {
+		setup:
+		def gradle = gradleProject(project: "forge/externalModDependency", version: version)
 
-        when:
-        	def result = gradle.run(task: "build")
+		when:
+		def result = gradle.run(task: "build")
 
-        then:
-        	result.task(":build").outcome == SUCCESS
-    }
+		then:
+		result.task(":build").outcome == SUCCESS
+
+		where:
+		version << STANDARD_TEST_VERSIONS
+	}
 }

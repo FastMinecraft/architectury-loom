@@ -24,6 +24,8 @@
 
 package net.fabricmc.loom.util.download;
 
+import static com.google.common.io.Files.createParentDirs;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -40,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
@@ -56,9 +59,13 @@ import org.slf4j.LoggerFactory;
 import net.fabricmc.loom.util.AttributeHelper;
 import net.fabricmc.loom.util.Checksum;
 
-public class Download {
+public final class Download {
 	private static final String E_TAG = "ETag";
 	private static final Logger LOGGER = LoggerFactory.getLogger(Download.class);
+	private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+			.followRedirects(HttpClient.Redirect.ALWAYS)
+			.proxy(ProxySelector.getDefault())
+			.build();
 
 	public static DownloadBuilder create(String url) throws URISyntaxException {
 		return DownloadBuilder.create(url);
@@ -71,8 +78,10 @@ public class Download {
 	private final boolean offline;
 	private final Duration maxAge;
 	private final DownloadProgressListener progressListener;
+	private final HttpClient.Version httpVersion;
+	private final int downloadAttempt;
 
-	Download(URI url, String expectedHash, boolean useEtag, boolean forceDownload, boolean offline, Duration maxAge, DownloadProgressListener progressListener) {
+	Download(URI url, String expectedHash, boolean useEtag, boolean forceDownload, boolean offline, Duration maxAge, DownloadProgressListener progressListener, HttpClient.Version httpVersion, int downloadAttempt) {
 		this.url = url;
 		this.expectedHash = expectedHash;
 		this.useEtag = useEtag;
@@ -80,37 +89,34 @@ public class Download {
 		this.offline = offline;
 		this.maxAge = maxAge;
 		this.progressListener = progressListener;
-	}
-
-	private HttpClient getHttpClient() throws DownloadException {
-		if (offline) {
-			throw error("Unable to download %s in offline mode", this.url);
-		}
-
-		return HttpClient.newBuilder()
-				.followRedirects(HttpClient.Redirect.ALWAYS)
-				.proxy(ProxySelector.getDefault())
-				.build();
+		this.httpVersion = httpVersion;
+		this.downloadAttempt = downloadAttempt;
 	}
 
 	private HttpRequest getRequest() {
 		return HttpRequest.newBuilder(url)
+				.version(httpVersion)
 				.GET()
 				.build();
 	}
 
 	private HttpRequest getETagRequest(String etag) {
 		return HttpRequest.newBuilder(url)
+				.version(httpVersion)
 				.GET()
 				.header("If-None-Match", etag)
 				.build();
 	}
 
 	private <T> HttpResponse<T> send(HttpRequest httpRequest, HttpResponse.BodyHandler<T> bodyHandler) throws DownloadException {
+		if (offline) {
+			throw error("Unable to download %s in offline mode", this.url);
+		}
+
 		progressListener.onStart();
 
 		try {
-			return getHttpClient().send(httpRequest, bodyHandler);
+			return HTTP_CLIENT.send(httpRequest, bodyHandler);
 		} catch (IOException | InterruptedException e) {
 			throw error(e, "Failed to download (%s)", url);
 		}
@@ -122,6 +128,7 @@ public class Download {
 		final boolean successful = statusCode >= 200 && statusCode < 300;
 
 		if (!successful) {
+			progressListener.onEnd();
 			throw error("HTTP request to (%s) returned unsuccessful status (%d)", url, statusCode);
 		}
 
@@ -139,6 +146,7 @@ public class Download {
 
 		if (!downloadRequired) {
 			// Does not require download, we are done here.
+			progressListener.onEnd();
 			return;
 		}
 
@@ -146,7 +154,7 @@ public class Download {
 			doDownload(output);
 		} catch (Throwable throwable) {
 			tryCleanup(output);
-			throw error(throwable, "Failed to download (%s) to (%s)", url, output);
+			throw error(throwable, "Failed to download file from (%s) to (%s)", url, output);
 		} finally {
 			progressListener.onEnd();
 		}
@@ -160,10 +168,9 @@ public class Download {
 		}
 
 		try {
-			Files.createDirectories(output.getParent());
-			Files.deleteIfExists(output);
+			createParentDirs(output.toFile());
 		} catch (IOException e) {
-			throw error(e, "Failed to prepare path for download");
+			throw error(e, "Failed to create parent directories");
 		}
 
 		final HttpRequest httpRequest = eTag
@@ -184,10 +191,16 @@ public class Download {
 		}
 
 		if (success) {
+			try {
+				Files.deleteIfExists(output);
+			} catch (IOException e) {
+				throw error(e, "Failed to delete existing file");
+			}
+
 			final long length = Long.parseLong(response.headers().firstValue("Content-Length").orElse("-1"));
 			AtomicLong totalBytes = new AtomicLong(0);
 
-			try (OutputStream outputStream = Files.newOutputStream(output)) {
+			try (OutputStream outputStream = Files.newOutputStream(output, StandardOpenOption.CREATE_NEW)) {
 				copyWithCallback(decodeOutput(response), outputStream, value -> {
 					if (length < 0) {
 						return;
@@ -196,12 +209,26 @@ public class Download {
 					progressListener.onProgress(totalBytes.addAndGet(value), length);
 				});
 			} catch (IOException e) {
-				tryCleanup(output);
 				throw error(e, "Failed to decode and write download output");
 			}
+
+			if (Files.notExists(output)) {
+				throw error("No file was downloaded");
+			}
+
+			if (length > 0) {
+				try {
+					final long actualLength = Files.size(output);
+
+					if (actualLength != length) {
+						throw error("Unexpected file length of %d bytes, expected %d bytes".formatted(actualLength, length));
+					}
+				} catch (IOException e) {
+					throw error(e);
+				}
+			}
 		} else {
-			tryCleanup(output);
-			throw error("HTTP request to (%s) returned unsuccessful status (%d)", url, statusCode);
+			throw error("HTTP request returned unsuccessful status (%d)", statusCode);
 		}
 
 		if (useEtag) {
@@ -254,13 +281,15 @@ public class Download {
 	}
 
 	private boolean requiresDownload(Path output) throws DownloadException {
-		if (getAndResetLock(output)) {
-			LOGGER.warn("Forcing downloading {} as existing lock file was found. This may happen if the gradle build was forcefully canceled.", output);
-			return true;
-		}
+		final boolean locked = getAndResetLock(output);
 
 		if (forceDownload || !exists(output)) {
 			// File does not exist, or we are forced to download again.
+			return true;
+		}
+
+		if (locked && downloadAttempt == 1) {
+			LOGGER.warn("Forcing downloading {} as existing lock file was found. This may happen if the gradle build was forcefully canceled.", output);
 			return true;
 		}
 
@@ -281,12 +310,6 @@ public class Download {
 				// Valid hash, no need to re-download
 				writeHash(output, expectedHash);
 				return false;
-			}
-
-			if (System.getProperty("fabric.loom.test") != null) {
-				// This should never happen in an ideal world.
-				// It means that something has altered a file that should be cached.
-				throw error("Download file (%s) may have been modified", output);
 			}
 
 			LOGGER.info("Found existing file ({}) to download with unexpected hash.", output);

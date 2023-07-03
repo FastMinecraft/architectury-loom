@@ -52,7 +52,7 @@ public final class AtRemapper {
 			Path atPath = fs.getPath(Constants.Forge.ACCESS_TRANSFORMER_PATH);
 
 			if (Files.exists(atPath)) {
-				String atContent = Files.readString(atPath);
+				String atContent = Files.readString(atPath, StandardCharsets.UTF_8);
 
 				String[] lines = atContent.split("\n");
 				List<String> output = new ArrayList<>(lines.length);

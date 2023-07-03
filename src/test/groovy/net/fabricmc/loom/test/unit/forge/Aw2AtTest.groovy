@@ -24,44 +24,45 @@
 
 package net.fabricmc.loom.test.unit.forge
 
-import net.fabricmc.accesswidener.AccessWidenerReader
-import net.fabricmc.loom.util.aw2at.Aw2At
 import org.cadixdev.at.AccessChange
 import org.cadixdev.at.ModifierChange
 import spock.lang.Specification
 
+import net.fabricmc.accesswidener.AccessWidenerReader
+import net.fabricmc.loom.util.aw2at.Aw2At
+
 class Aw2AtTest extends Specification {
 	def "test accessible"() {
 		when:
-			def at = Aw2At.toAt(AccessWidenerReader.AccessType.ACCESSIBLE)
+		def at = Aw2At.toAt(AccessWidenerReader.AccessType.ACCESSIBLE)
 
 		then:
-			at.access == AccessChange.PUBLIC
-			// AW makes previously private methods also final, but this cannot be replicated
-			// using Forge AT.
-			at.final == ModifierChange.NONE
+		at.access == AccessChange.PUBLIC
+		// AW makes previously private methods also final, but this cannot be replicated
+		// using Forge AT.
+		at.final == ModifierChange.NONE
 	}
 
 	def "test extendable"() {
 		when:
-			def at = Aw2At.toAt(AccessWidenerReader.AccessType.EXTENDABLE)
+		def at = Aw2At.toAt(AccessWidenerReader.AccessType.EXTENDABLE)
 
 		then:
-			// AW makes previously private methods protected and does not change the visibility
-			// of protected methods, but this cannot be replicated using Forge AT.
-			at.access == AccessChange.PUBLIC
-			at.final == ModifierChange.REMOVE
+		// AW makes previously private methods protected and does not change the visibility
+		// of protected methods, but this cannot be replicated using Forge AT.
+		at.access == AccessChange.PUBLIC
+		at.final == ModifierChange.REMOVE
 	}
 
 	def "test mutable"() {
 		when:
-			def at = Aw2At.toAt(AccessWidenerReader.AccessType.MUTABLE)
+		def at = Aw2At.toAt(AccessWidenerReader.AccessType.MUTABLE)
 
 		then:
-			// The access change to public is needed because the Forge AT format cannot
-			// have a bare "-f" modifier. Reusing the previous visibility needs bytecode analysis,
-			// so this is good enough.
-			at.access == AccessChange.PUBLIC
-			at.final == ModifierChange.REMOVE
+		// The access change to public is needed because the Forge AT format cannot
+		// have a bare "-f" modifier. Reusing the previous visibility needs bytecode analysis,
+		// so this is good enough.
+		at.access == AccessChange.PUBLIC
+		at.final == ModifierChange.REMOVE
 	}
 }

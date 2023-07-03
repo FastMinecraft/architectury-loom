@@ -56,6 +56,7 @@ import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.decompilers.DecompilerOptions;
 import net.fabricmc.loom.api.mappings.intermediate.IntermediateMappingsProvider;
 import net.fabricmc.loom.api.mappings.layered.spec.LayeredMappingSpecBuilder;
+import net.fabricmc.loom.api.processor.MinecraftJarProcessor;
 import net.fabricmc.loom.configuration.RemapConfigurations;
 import net.fabricmc.loom.configuration.ide.RunConfig;
 import net.fabricmc.loom.configuration.ide.RunConfigSettings;
@@ -79,6 +80,7 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 	private static final String PLATFORM_PROPERTY = "loom.platform";
 
 	protected final DeprecationHelper deprecationHelper;
+	@Deprecated()
 	protected final ListProperty<JarProcessor> jarProcessors;
 	protected final ConfigurableFileCollection log4jConfigs;
 	protected final RegularFileProperty accessWidener;
@@ -99,6 +101,7 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 	private final NamedDomainObjectContainer<DecompilerOptions> decompilers;
 	private final NamedDomainObjectContainer<ModSettings> mods;
 	private final NamedDomainObjectList<RemapConfigurationSettings> remapConfigurations;
+	private final ListProperty<MinecraftJarProcessor<?>> minecraftJarProcessors;
 
 	// A common mistake with layered mappings is to call the wrong `officialMojangMappings` method, use this to keep track of when we are building a layered mapping spec.
 	protected final ThreadLocal<Boolean> layeredSpecBuilderScope = ThreadLocal.withInitial(() -> false);
@@ -122,7 +125,7 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 				.convention(true);
 		this.transitiveAccessWideners.finalizeValueOnRead();
 		this.modProvidedJavadoc = project.getObjects().property(Boolean.class)
-				.convention(true);
+				.convention(project.provider(() -> !isForge()));
 		this.modProvidedJavadoc.finalizeValueOnRead();
 		this.intermediary = project.getObjects().property(String.class)
 				.convention("https://maven.fabricmc.net/net/fabricmc/intermediary/%1$s/intermediary-%1$s-v2.jar");
@@ -139,6 +142,9 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 		this.decompilers = project.getObjects().domainObjectContainer(DecompilerOptions.class);
 		this.mods = project.getObjects().domainObjectContainer(ModSettings.class);
 		this.remapConfigurations = project.getObjects().namedDomainObjectList(RemapConfigurationSettings.class);
+		//noinspection unchecked
+		this.minecraftJarProcessors = (ListProperty<MinecraftJarProcessor<?>>) (Object) project.getObjects().listProperty(MinecraftJarProcessor.class);
+		this.minecraftJarProcessors.finalizeValueOnRead();
 
 		this.minecraftJarConfiguration = project.getObjects().property(MinecraftJarConfiguration.class).convention(MinecraftJarConfiguration.MERGED);
 		this.minecraftJarConfiguration.finalizeValueOnRead();
@@ -153,16 +159,13 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 		this.splitModDependencies.finalizeValueOnRead();
 
 		this.interfaceInjectionExtension = project.getObjects().newInstance(InterfaceInjectionExtensionAPI.class);
+		this.interfaceInjectionExtension.getIsEnabled().convention(true);
 
 		this.splitEnvironmentalSourceSet = project.getObjects().property(Boolean.class).convention(false);
 		this.splitEnvironmentalSourceSet.finalizeValueOnRead();
 
-		// Add main source set by default
+		// Enable dep iface injection by default
 		interfaceInjection(interfaceInjection -> {
-			final SourceSet main = SourceSetHelper.getMainSourceSet(project);
-			interfaceInjection.getInterfaceInjectionSourceSets().add(main);
-
-			interfaceInjection.getInterfaceInjectionSourceSets().finalizeValueOnRead();
 			interfaceInjection.getEnableDependencyInterfaceInjection().convention(true).finalizeValueOnRead();
 		});
 		this.platform = project.provider(Suppliers.memoize(() -> {
@@ -212,6 +215,16 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 	@Override
 	public ListProperty<JarProcessor> getGameJarProcessors() {
 		return jarProcessors;
+	}
+
+	@Override
+	public ListProperty<MinecraftJarProcessor<?>> getMinecraftJarProcessors() {
+		return minecraftJarProcessors;
+	}
+
+	@Override
+	public void addMinecraftJarProcessor(Class<? extends MinecraftJarProcessor<?>> clazz, Object... parameters) {
+		getMinecraftJarProcessors().add(getProject().getObjects().newInstance(clazz, parameters));
 	}
 
 	@Override
@@ -306,7 +319,7 @@ public abstract class LoomGradleExtensionApiImpl implements LoomGradleExtensionA
 
 	@Override
 	public File getMappingsFile() {
-		return LoomGradleExtension.get(getProject()).getMappingsProvider().tinyMappings.toFile();
+		return LoomGradleExtension.get(getProject()).getMappingConfiguration().tinyMappings.toFile();
 	}
 
 	@Override

@@ -24,17 +24,18 @@
 
 package net.fabricmc.loom.test.unit.forge
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Path
+
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import net.fabricmc.loom.configuration.providers.forge.ForgeRunTemplate
-import net.fabricmc.loom.util.ZipUtils
-import net.fabricmc.loom.util.download.Download
 import spock.lang.Specification
 import spock.lang.TempDir
 import spock.lang.Unroll
 
-import java.nio.charset.StandardCharsets
-import java.nio.file.Path
+import net.fabricmc.loom.configuration.providers.forge.ForgeRunTemplate
+import net.fabricmc.loom.util.ZipUtils
+import net.fabricmc.loom.util.download.Download
 
 class ForgeRunTemplateTest extends Specification {
 	@TempDir
@@ -52,23 +53,23 @@ class ForgeRunTemplateTest extends Specification {
 	@Unroll
 	def "test #gameVersion #forgeVersion"() {
 		setup:
-			def json = downloadForgeConfig(gameVersion, forgeVersion)
+		def json = downloadForgeConfig(gameVersion, forgeVersion)
 
 		when:
-			def template = ForgeRunTemplate.fromJson(json.getAsJsonObject("runs").getAsJsonObject("client"))
+		def template = ForgeRunTemplate.fromJson(json.getAsJsonObject("runs").getAsJsonObject("client"))
 
 		then:
-			template.name == template.name() // check that the name gradle sees matches the name read from the json
-			template.name() == 'client'
-			template.main() == mainClass
+		template.name == template.name() // check that the name gradle sees matches the name read from the json
+		template.name() == 'client'
+		template.main() == mainClass
 
 		where:
-			gameVersion | forgeVersion | mainClass
-			'1.14.4'    | '28.2.26'    | 'net.minecraftforge.userdev.LaunchTesting'
-			'1.15.2'    | '31.2.57'    | 'net.minecraftforge.userdev.LaunchTesting'
-			'1.16.5'    | '36.2.39'    | 'net.minecraftforge.userdev.LaunchTesting'
-			'1.17.1'    | '37.1.1'     | 'cpw.mods.bootstraplauncher.BootstrapLauncher'
-			'1.18.2'    | '40.1.80'    | 'cpw.mods.bootstraplauncher.BootstrapLauncher'
-			'1.19.2'    | '43.1.25'    | 'cpw.mods.bootstraplauncher.BootstrapLauncher'
+		gameVersion | forgeVersion | mainClass
+		'1.14.4'    | '28.2.26'    | 'net.minecraftforge.userdev.LaunchTesting'
+		'1.15.2'    | '31.2.57'    | 'net.minecraftforge.userdev.LaunchTesting'
+		'1.16.5'    | '36.2.39'    | 'net.minecraftforge.userdev.LaunchTesting'
+		'1.17.1'    | '37.1.1'     | 'cpw.mods.bootstraplauncher.BootstrapLauncher'
+		'1.18.2'    | '40.1.80'    | 'cpw.mods.bootstraplauncher.BootstrapLauncher'
+		'1.19.2'    | '43.1.25'    | 'cpw.mods.bootstraplauncher.BootstrapLauncher'
 	}
 }

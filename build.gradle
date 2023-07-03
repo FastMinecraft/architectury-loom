@@ -3,9 +3,14 @@ plugins {
 	id 'maven-publish'
 	id 'java-gradle-plugin'
 	id 'idea'
+	id 'eclipse'
 	id 'groovy'
-	id "org.jetbrains.kotlin.jvm" version "1.6.21" // Must match the version included with gradle.
+	id 'checkstyle'
+	id 'jacoco'
+	id 'codenarc'
+	id "org.jetbrains.kotlin.jvm" version "1.8.22" // Must match the version included with gradle.
 	id "com.diffplug.spotless" version "6.8.0"
+	id "org.gradle.test-retry" version "1.5.2"
 	id "dev.fastmc.maven-repo" version "1.0.0"
 }
 
@@ -61,15 +66,15 @@ dependencies {
 
 	// libraries
 	implementation('commons-io:commons-io:2.11.0')
-	implementation('com.google.code.gson:gson:2.10')
+	implementation('com.google.code.gson:gson:2.10.1')
 	implementation('com.fasterxml.jackson.core:jackson-databind:2.14.0')
 	implementation('com.google.guava:guava:31.1-jre')
-	implementation('org.ow2.asm:asm:9.4')
-	implementation('org.ow2.asm:asm-analysis:9.4')
-	implementation('org.ow2.asm:asm-commons:9.4')
-	implementation('org.ow2.asm:asm-tree:9.4')
-	implementation('org.ow2.asm:asm-util:9.4')
-	implementation('me.tongfei:progressbar:0.9.5')
+	implementation('org.ow2.asm:asm:9.5')
+	implementation('org.ow2.asm:asm-analysis:9.5')
+	implementation('org.ow2.asm:asm-commons:9.5')
+	implementation('org.ow2.asm:asm-tree:9.5')
+	implementation('org.ow2.asm:asm-util:9.5')
+	implementation('me.tongfei:progressbar:0.9.0')
 
 	// game handling utils
 	implementation('net.fabricmc:stitch:0.6.2') {
@@ -93,15 +98,15 @@ dependencies {
 	implementation('it.unimi.dsi:fastutil:8.5.11')
 
 	// source code remapping
-	implementation('dev.architectury:mercury:0.1.1.11')
+	implementation('dev.architectury:mercury:0.1.2.15')
 
 	// Kotlin
-	implementation('org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.5.0') {
+	implementation('org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.6.0') {
 		transitive = false
 	}
 
 	// Kapt integration
-	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.21') // Must match the version included with gradle.
+	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.22') // Must match the version included with gradle.
 
 	// Forge patches
 	implementation('net.minecraftforge:installertools:1.2.0')
@@ -111,20 +116,22 @@ dependencies {
 	implementation('com.opencsv:opencsv:5.7.1')
 	implementation('net.minecraftforge:DiffPatch:2.0.7')
 
+	// Forge mods.toml parsing
+	implementation ('com.electronwill.night-config:toml:3.6.6')
+
 	// Testing
 	testImplementation(gradleTestKit())
 	testImplementation('org.spockframework:spock-core:2.3-groovy-3.0') {
 		exclude module: 'groovy-all'
 	}
-	testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
-	testImplementation('io.javalin:javalin:5.2.0') {
+	testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
+	testImplementation('io.javalin:javalin:5.4.2') {
 		exclude group: 'org.jetbrains.kotlin'
 	}
-	testImplementation 'net.fabricmc:fabric-installer:0.9.0'
-	testImplementation 'org.mockito:mockito-core:4.8.0'
+	testImplementation 'org.mockito:mockito-core:5.2.0'
 
-	compileOnly 'org.jetbrains:annotations:23.0.0'
-	testCompileOnly 'org.jetbrains:annotations:23.0.0'
+	compileOnly 'org.jetbrains:annotations:24.0.1'
+	testCompileOnly 'org.jetbrains:annotations:24.0.1'
 
 	testCompileOnly('net.fabricmc:sponge-mixin:0.11.4+mixin.0.8.5') {
 		transitive = false
@@ -147,10 +154,21 @@ spotless {
 	java {
 		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
 		targetExclude("**/loom/util/DownloadUtil.java", "**/loom/util/FileSystemUtil.java")
+		targetExclude("**/dev/architectury/**")
 	}
 
 	groovy {
+		importOrder('java', 'javax', '', 'net.fabricmc', '\\#')
 		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
+		greclipse()
+	}
+
+	groovyGradle {
+		target 'src/**/*.gradle', '*.gradle'
+		greclipse()
+
+		// This file uses a @MAPPINGS@ token which is not valid Groovy
+		targetExclude('**/projects/forge/simple/build.gradle')
 	}
 
 	kotlin {
@@ -171,7 +189,8 @@ gradlePlugin {
 }
 
 test {
-	maxHeapSize = "2048m"
+	maxHeapSize = "2560m"
+	jvmArgs "-XX:+HeapDumpOnOutOfMemoryError"
 	useJUnitPlatform()
 
 	// Forward system prop onto tests.
@@ -212,14 +231,13 @@ task writeActionsTestMatrix() {
 					return
 				}
 
+				if (it.name.endsWith("FabricAPITest.groovy")) {
+					// Arch: Disabled as it hangs
+					return
+				}
+
 				def className = it.path.toString().replace(".groovy", "")
 				className = className.substring(className.lastIndexOf("integration/") + "integration/".length()).replace('/', '.')
-
-				// Disabled for CI, as it fails too much.
-				if (className.endsWith("DecompileTest")) return
-
-				// Disabled for CI as it hangs.
-				if (className.endsWith("FabricAPITest")) return
 
 				testMatrix.add("net.fabricmc.loom.test.integration.${className}")
 			}
@@ -249,9 +267,9 @@ task downloadGradleSources() {
 	doLast {
 		// Awful hack to find the gradle api location
 		def gradleApiFile = project.configurations.detachedConfiguration(dependencies.gradleApi()).files.stream()
-				.filter {
+				.find {
 					it.name.startsWith("gradle-api")
-				}.findFirst().orElseThrow()
+				}
 
 		def gradleApiSources = new File(gradleApiFile.absolutePath.replace(".jar", "-sources.jar"))
 		def url = "https://services.gradle.org/distributions/gradle-${GradleVersion.current().getVersion()}-src.zip"
@@ -265,6 +283,24 @@ task downloadGradleSources() {
 
 tasks.withType(GenerateModuleMetadata) {
 	enabled = false
+}
+
+task printActionsTestName(type: PrintActionsTestName) {
+}
+
+/**
+ * Replaces invalid characters in test names for GitHub Actions artifacts.
+ */
+class PrintActionsTestName extends DefaultTask {
+	@Input
+	@Option(option = "name", description = "The test name")
+	String testName
+
+	@TaskAction
+	def run() {
+		def sanitised = testName.replace('*', '_')
+		new File(System.getenv().GITHUB_OUTPUT) << "\ntest=$sanitised"
+	}
 }
 
 tasks.test.enabled = System.getProperty("run_test") == "true"

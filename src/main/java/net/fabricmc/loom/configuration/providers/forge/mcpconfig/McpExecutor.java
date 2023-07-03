@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2022 FabricMC
+ * Copyright (c) 2022-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -336,7 +336,8 @@ public final class McpExecutor {
 
 		@Override
 		public Set<File> getMinecraftLibraries() {
-			return project.getConfigurations().getByName(Constants.Configurations.MINECRAFT_DEPENDENCIES).resolve();
+			// (1.2) minecraftRuntimeLibraries contains the compile-time libraries as well.
+			return project.getConfigurations().getByName(Constants.Configurations.MINECRAFT_RUNTIME_LIBRARIES).resolve();
 		}
 	}
 }

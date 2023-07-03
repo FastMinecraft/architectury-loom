@@ -32,19 +32,23 @@ import javax.inject.Inject;
 
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.task.service.SourceRemapperService;
+import net.fabricmc.loom.util.service.BuildSharedServiceManager;
 import net.fabricmc.loom.util.service.UnsafeWorkQueueHelper;
 
 public abstract class RemapSourcesJarTask extends AbstractRemapJarTask {
+	private final Provider<BuildSharedServiceManager> serviceManagerProvider;
+
 	@Inject
 	public RemapSourcesJarTask() {
 		super();
+		serviceManagerProvider = BuildSharedServiceManager.createForTask(this, getBuildEventsListenerRegistry());
 
 		getClasspath().from(getProject().getConfigurations().getByName(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME));
 	}
@@ -52,14 +56,12 @@ public abstract class RemapSourcesJarTask extends AbstractRemapJarTask {
 	@TaskAction
 	public void run() {
 		submitWork(RemapSourcesAction.class, params -> {
-			params.getSourcesRemapperServiceUuid().set(UnsafeWorkQueueHelper.create(getProject(), SourceRemapperService.create(this)));
+			params.getSourcesRemapperServiceUuid().set(UnsafeWorkQueueHelper.create(SourceRemapperService.create(serviceManagerProvider.get().get(), this)));
 		});
 	}
 
 	@Override
-	protected List<String> getClientOnlyEntries() {
-		final SourceSet clientSourceSet = MinecraftSourceSets.Split.getClientSourceSet(getProject());
-
+	protected List<String> getClientOnlyEntries(SourceSet clientSourceSet) {
 		return clientSourceSet.getAllSource().getFiles().stream()
 				.map(relativePath(getRootPaths(clientSourceSet.getAllSource().getSrcDirs())))
 				.toList();

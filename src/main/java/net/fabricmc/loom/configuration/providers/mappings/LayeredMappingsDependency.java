@@ -37,21 +37,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-import org.gradle.api.Action;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Dependency;
-import org.gradle.api.artifacts.ExternalDependency;
-import org.gradle.api.artifacts.ExternalModuleDependency;
-import org.gradle.api.artifacts.ModuleIdentifier;
-import org.gradle.api.artifacts.ModuleVersionIdentifier;
-import org.gradle.api.artifacts.MutableVersionConstraint;
 import org.gradle.api.artifacts.FileCollectionDependency;
 import org.gradle.api.artifacts.SelfResolvingDependency;
-import org.gradle.api.artifacts.VersionConstraint;
-import org.gradle.api.internal.artifacts.DefaultModuleIdentifier;
-import org.gradle.api.internal.artifacts.ModuleVersionSelectorStrictSpec;
-import org.gradle.api.internal.artifacts.dependencies.AbstractModuleDependency;
-import org.gradle.api.internal.artifacts.dependencies.DefaultMutableVersionConstraint;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.tasks.TaskDependency;
 
@@ -66,7 +55,7 @@ import net.fabricmc.mappingio.adapter.MappingSourceNsSwitch;
 import net.fabricmc.mappingio.format.Tiny2Writer;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
-public class LayeredMappingsDependency extends AbstractModuleDependency implements SelfResolvingDependency, ExternalModuleDependency, FileCollectionDependency {
+public class LayeredMappingsDependency implements SelfResolvingDependency, FileCollectionDependency {
 	private static final String GROUP = "loom";
 	private static final String MODULE = "mappings";
 
@@ -76,7 +65,6 @@ public class LayeredMappingsDependency extends AbstractModuleDependency implemen
 	private final String version;
 
 	public LayeredMappingsDependency(Project project, MappingContext mappingContext, LayeredMappingSpec layeredMappingSpec, String version) {
-		super(null);
 		this.project = project;
 		this.mappingContext = mappingContext;
 		this.layeredMappingSpec = layeredMappingSpec;
@@ -170,21 +158,6 @@ public class LayeredMappingsDependency extends AbstractModuleDependency implemen
 	}
 
 	@Override
-	public VersionConstraint getVersionConstraint() {
-		return new DefaultMutableVersionConstraint(getVersion());
-	}
-
-	@Override
-	public boolean matchesStrictly(ModuleVersionIdentifier identifier) {
-		return new ModuleVersionSelectorStrictSpec(this).isSatisfiedBy(identifier);
-	}
-
-	@Override
-	public ModuleIdentifier getModule() {
-		return DefaultModuleIdentifier.newId(GROUP, MODULE);
-	}
-
-	@Override
 	public boolean contentEquals(Dependency dependency) {
 		if (dependency instanceof LayeredMappingsDependency layeredMappingsDependency) {
 			return Objects.equals(layeredMappingsDependency.getVersion(), this.getVersion());
@@ -194,32 +167,8 @@ public class LayeredMappingsDependency extends AbstractModuleDependency implemen
 	}
 
 	@Override
-	public boolean isChanging() {
-		return false;
-	}
-
-	@Override
-	public ExternalModuleDependency setChanging(boolean b) {
-		return this;
-	}
-
-	@Override
-	public boolean isForce() {
-		return false;
-	}
-
-	@Override
-	public ExternalDependency setForce(boolean b) {
-		return this;
-	}
-
-	@Override
-	public ExternalModuleDependency copy() {
+	public Dependency copy() {
 		return new LayeredMappingsDependency(project, mappingContext, layeredMappingSpec, version);
-	}
-
-	@Override
-	public void version(Action<? super MutableVersionConstraint> action) {
 	}
 
 	@Override

@@ -26,6 +26,7 @@ package net.fabricmc.loom.util.function;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
@@ -83,13 +84,26 @@ public final class CollectionUtil {
 	 * @return a mutable list with the transformed entries
 	 */
 	public static <A, B> List<B> map(Iterable<? extends A> collection, Function<? super A, ? extends B> transform) {
-		ArrayList<B> result = new ArrayList<>();
+		return mapTo(collection, new ArrayList<>(), transform);
+	}
 
+	/**
+	 * Transforms the collection with a function, storing the results in a target collection.
+	 *
+	 * @param collection the source collection
+	 * @param target     the target collection
+	 * @param transform  the transformation function
+	 * @param <A> the source type
+	 * @param <B> the target type
+	 * @param <C> the target collection type
+	 * @return the target collection
+	 */
+	public static <A, B, C extends Collection<B>> C mapTo(Iterable<? extends A> collection, C target, Function<? super A, ? extends B> transform) {
 		for (A a : collection) {
-			result.add(transform.apply(a));
+			target.add(transform.apply(a));
 		}
 
-		return result;
+		return target;
 	}
 
 	/**
@@ -104,5 +118,48 @@ public final class CollectionUtil {
 		ArrayList<A> result = new ArrayList<>(collection);
 		result.removeIf(filter.negate());
 		return result;
+	}
+
+	/**
+	 * Gets the single element of an iterable.
+	 *
+	 * @param iterable the iterable
+	 * @param <A> the element type
+	 * @return the single element, or empty if there are no elements or multiple elements
+	 */
+	public static <A> Optional<A> single(Iterable<? extends A> iterable) {
+		final Iterator<? extends A> iter = iterable.iterator();
+
+		// No elements
+		if (!iter.hasNext()) {
+			return Optional.empty();
+		}
+
+		A single = iter.next();
+
+		// Too many elements
+		if (iter.hasNext()) {
+			return Optional.empty();
+		}
+
+		return Optional.of(single);
+	}
+
+	/**
+	 * Gets the first element of an iterable.
+	 *
+	 * @param iterable the iterable
+	 * @param <A> the element type
+	 * @return the first element, or empty if there are no elements
+	 */
+	public static <A> Optional<A> first(Iterable<? extends A> iterable) {
+		final Iterator<? extends A> iter = iterable.iterator();
+
+		// No elements
+		if (!iter.hasNext()) {
+			return Optional.empty();
+		}
+
+		return Optional.of(iter.next());
 	}
 }

@@ -33,6 +33,8 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import javax.inject.Inject;
+
 import com.google.common.collect.ImmutableMap;
 import groovy.util.Node;
 import org.gradle.api.Project;
@@ -49,7 +51,7 @@ import net.fabricmc.loom.util.DeprecationHelper;
 import net.fabricmc.loom.util.GroovyXmlUtil;
 import net.fabricmc.loom.util.gradle.GradleUtils;
 
-public final class MavenPublication {
+public abstract class MavenPublication implements Runnable {
 	// ImmutableMap is needed since it guarantees ordering
 	// (compile must go before runtime, or otherwise dependencies might get the "weaker" runtime scope).
 	private static final Map<String, String> CONFIGURATION_TO_SCOPE = ImmutableMap.of(
@@ -58,22 +60,22 @@ public final class MavenPublication {
 	);
 	private static final Set<Publication> EXCLUDED_PUBLICATIONS = Collections.newSetFromMap(new WeakHashMap<>());
 
-	private MavenPublication() {
-	}
+	@Inject
+	protected abstract Project getProject();
 
-	public static void configure(Project project) {
-		GradleUtils.afterSuccessfulEvaluation(project, () -> {
+	@Override
+	public void run() {
+		GradleUtils.afterSuccessfulEvaluation(getProject(), () -> {
 			AtomicBoolean reportedDeprecation = new AtomicBoolean(false);
 
 			CONFIGURATION_TO_SCOPE.forEach((configurationName, scope) -> {
-				Configuration config = project.getConfigurations().getByName(configurationName);
+				Configuration config = getProject().getConfigurations().getByName(configurationName);
 
 				// add modsCompile to maven-publish
-				PublishingExtension mavenPublish = project.getExtensions().findByType(PublishingExtension.class);
+				PublishingExtension mavenPublish = getProject().getExtensions().findByType(PublishingExtension.class);
 
 				if (mavenPublish != null) {
-					project.getLogger().info("Processing maven publication for project [" + project.getName() + "] of " + configurationName);
-					processEntry(project, scope, config, mavenPublish, reportedDeprecation);
+					processEntry(scope, config, mavenPublish, reportedDeprecation);
 				}
 			});
 		});
@@ -89,7 +91,7 @@ public final class MavenPublication {
 		}
 	}
 
-	private static void processEntry(Project project, String scope, Configuration config, PublishingExtension mavenPublish, AtomicBoolean reportedDeprecation) {
+	private void processEntry(String scope, Configuration config, PublishingExtension mavenPublish, AtomicBoolean reportedDeprecation) {
 		mavenPublish.publications((publications) -> {
 			for (Publication publication : publications) {
 				if (!(publication instanceof org.gradle.api.publish.maven.MavenPublication mavenPublication)) {
@@ -98,13 +100,12 @@ public final class MavenPublication {
 
 				if (hasSoftwareComponent(publication) || EXCLUDED_PUBLICATIONS.contains(publication)) {
 					continue;
-				} else if (!reportedDeprecation.get() && !LoomGradleExtension.get(project).isForge()) {
-					DeprecationHelper deprecationHelper = LoomGradleExtension.get(project).getDeprecationHelper();
+				} else if (!reportedDeprecation.get() && !LoomGradleExtension.get(getProject()).isForge()) {
+					DeprecationHelper deprecationHelper = LoomGradleExtension.get(getProject()).getDeprecationHelper();
 					deprecationHelper.warn("Loom is applying dependency data manually to publications instead of using a software component (from(components[\"java\"])). This is deprecated.");
 					reportedDeprecation.set(true);
 				}
 
-				project.getLogger().info("Processing maven publication [" + publication.getName() + "]");
 				mavenPublication.pom((pom) -> pom.withXml((xml) -> {
 					Node dependencies = GroovyXmlUtil.getOrCreateNode(xml.asNode(), "dependencies");
 					Set<String> foundArtifacts = new HashSet<>();
@@ -120,11 +121,8 @@ public final class MavenPublication {
 
 					for (Dependency dependency : config.getAllDependencies()) {
 						if (foundArtifacts.contains(dependency.getGroup() + ":" + dependency.getName())) {
-							project.getLogger().info("Found inserted artifact " + dependency.getGroup() + ":" + dependency.getName());
 							continue;
 						}
-
-						project.getLogger().info("Inserting artifact " + dependency.getGroup() + ":" + dependency.getName());
 
 						Node depNode = dependencies.appendNode("dependency");
 						depNode.appendNode("groupId", dependency.getGroup());

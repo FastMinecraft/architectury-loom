@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2022 FabricMC
+ * Copyright (c) 2022-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,34 +24,33 @@
 
 package net.fabricmc.loom.test.integration.forge
 
-import net.fabricmc.loom.test.util.GradleProjectTestTrait
 import spock.lang.Specification
 import spock.lang.Unroll
+
+import net.fabricmc.loom.test.util.GradleProjectTestTrait
 
 import static net.fabricmc.loom.test.LoomTestConstants.DEFAULT_GRADLE
 import static org.gradle.testkit.runner.TaskOutcome.SUCCESS
 
 class PatchedDecompileTest extends Specification implements GradleProjectTestTrait {
 	@Unroll
-    def "decompile #mcVersion #forgeVersion"() {
+	def "decompile #mcVersion #forgeVersion"() {
 		setup:
-			def gradle = gradleProject(project: "forge/simple", version: DEFAULT_GRADLE)
-			gradle.buildGradle.text = gradle.buildGradle.text.replace('@MCVERSION@', mcVersion)
+		def gradle = gradleProject(project: "forge/simple", version: DEFAULT_GRADLE)
+		gradle.buildGradle.text = gradle.buildGradle.text.replace('@MCVERSION@', mcVersion)
 				.replace('@FORGEVERSION@', forgeVersion)
 				.replace('@MAPPINGS@', 'loom.officialMojangMappings()')
 
 		when:
-			def result = gradle.run(task: "genForgePatchedSources")
+		def result = gradle.run(task: "genForgePatchedSources")
 
 		then:
-			result.task(":genForgePatchedSources").outcome == SUCCESS
+		result.task(":genForgePatchedSources").outcome == SUCCESS
 
 		where:
-			mcVersion | forgeVersion
-			'1.19.2'  | "43.1.1"
-			'1.18.1'  | "39.0.63"
-			'1.17.1'  | "37.0.67"
-			'1.16.5'  | "36.2.4"
-			'1.14.4'  | "28.2.23"
+		mcVersion | forgeVersion
+		'1.19.2'  | "43.1.1"
+		'1.18.1'  | "39.0.63"
+		'1.17.1'  | "37.0.67"
 	}
 }

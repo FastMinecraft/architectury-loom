@@ -72,7 +72,8 @@ public abstract class UnpickJarTask extends DefaultTask {
 	@Inject
 	public UnpickJarTask() {
 		getConstantJar().setFrom(getProject().getConfigurations().getByName(Constants.Configurations.MAPPING_CONSTANTS));
-		getUnpickClasspath().setFrom(getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT_DEPENDENCIES));
+		getUnpickClasspath().setFrom(getProject().getConfigurations().getByName(Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES));
+		getUnpickClasspath().from(getProject().getConfigurations().getByName(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED));
 	}
 
 	@TaskAction

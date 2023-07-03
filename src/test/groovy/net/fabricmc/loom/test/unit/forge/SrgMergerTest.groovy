@@ -24,70 +24,71 @@
 
 package net.fabricmc.loom.test.unit.forge
 
-import net.fabricmc.loom.util.srg.SrgMerger
-import net.fabricmc.mappingio.MappingUtil
-import net.fabricmc.mappingio.format.MappingFormat
-import spock.lang.Specification
-import spock.lang.TempDir
-
 import java.nio.file.Files
 import java.nio.file.Path
 
+import spock.lang.Specification
+import spock.lang.TempDir
+
+import net.fabricmc.loom.util.srg.SrgMerger
+import net.fabricmc.mappingio.MappingUtil
+import net.fabricmc.mappingio.format.MappingFormat
+
 class SrgMergerTest extends Specification {
-    @TempDir
-    Path mappingsDir
+	@TempDir
+	Path mappingsDir
 
-    def "test with proguard extras"() {
-        def output = mappingsDir.resolve("output.tiny")
-        def expected = readTestData("expectedOutput.tiny")
-        def proguardInput = extractTempFile("proguard.txt")
-        def extraMappings = new SrgMerger.ExtraMappings(proguardInput, MappingFormat.PROGUARD, MappingUtil.NS_TARGET_FALLBACK, MappingUtil.NS_SOURCE_FALLBACK)
+	def "test with proguard extras"() {
+		def output = mappingsDir.resolve("output.tiny")
+		def expected = readTestData("expectedOutput.tiny")
+		def proguardInput = extractTempFile("proguard.txt")
+		def extraMappings = new SrgMerger.ExtraMappings(proguardInput, MappingFormat.PROGUARD, MappingUtil.NS_TARGET_FALLBACK, MappingUtil.NS_SOURCE_FALLBACK)
 
-        when:
-            merge(extraMappings, output)
+		when:
+		merge(extraMappings, output)
 
-        then:
-            Files.readAllLines(output) == expected
-    }
+		then:
+		Files.readAllLines(output) == expected
+	}
 
-    def "test with srg extras"() {
-        def output = mappingsDir.resolve("output.tiny")
-        def expected = readTestData("expectedOutput.tiny")
-        def extraInput = extractTempFile("extraInput.tsrg")
-        def extraMappings = SrgMerger.ExtraMappings.ofMojmapTsrg(extraInput)
+	def "test with srg extras"() {
+		def output = mappingsDir.resolve("output.tiny")
+		def expected = readTestData("expectedOutput.tiny")
+		def extraInput = extractTempFile("extraInput.tsrg")
+		def extraMappings = SrgMerger.ExtraMappings.ofMojmapTsrg(extraInput)
 
-        when:
-            merge(extraMappings, output)
+		when:
+		merge(extraMappings, output)
 
-        then:
-            Files.readAllLines(output) == expected
-    }
+		then:
+		Files.readAllLines(output) == expected
+	}
 
-    private def merge(SrgMerger.ExtraMappings extraMappings, Path output) {
-        def srgInput = extractTempFile("srgInput.tsrg")
-        def tinyInput = extractTempFile("tinyInput.tiny")
-        SrgMerger.mergeSrg(srgInput, tinyInput, output, extraMappings, true)
-    }
+	private def merge(SrgMerger.ExtraMappings extraMappings, Path output) {
+		def srgInput = extractTempFile("srgInput.tsrg")
+		def tinyInput = extractTempFile("tinyInput.tiny")
+		SrgMerger.mergeSrg(srgInput, tinyInput, output, extraMappings, true)
+	}
 
-    private InputStream openTestDataStream(String path) {
-        return getClass().getResourceAsStream("/forge/testSrg/$path")
-    }
+	private InputStream openTestDataStream(String path) {
+		return getClass().getResourceAsStream("/forge/testSrg/$path")
+	}
 
-    private List<String> readTestData(String path) {
-        try (def input = openTestDataStream(path)) {
-            assert input != null
-            return input.readLines()
-        }
-    }
+	private List<String> readTestData(String path) {
+		openTestDataStream(path).withCloseable { input ->
+			assert input != null
+			return input.readLines()
+		}
+	}
 
-    private Path extractTempFile(String path) {
-        def output = mappingsDir.resolve(path)
+	private Path extractTempFile(String path) {
+		def output = mappingsDir.resolve(path)
 
-        try (def input = openTestDataStream(path)) {
-            assert input != null
-            Files.copy(input, output)
-        }
+		openTestDataStream(path).withCloseable { input ->
+			assert input != null
+			Files.copy(input, output)
+		}
 
-        return output
-    }
+		return output
+	}
 }

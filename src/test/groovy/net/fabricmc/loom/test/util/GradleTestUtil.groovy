@@ -24,8 +24,10 @@
 
 package net.fabricmc.loom.test.util
 
-import net.fabricmc.loom.LoomGradleExtension
 import org.gradle.api.Project
+import org.gradle.api.artifacts.dsl.RepositoryHandler
+import org.gradle.api.file.RegularFile
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.internal.tasks.DefaultSourceSet
 import org.gradle.api.model.ObjectFactory
@@ -33,22 +35,25 @@ import org.gradle.api.plugins.ExtensionContainer
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.util.PatternFilterable
+import org.jetbrains.annotations.Nullable
+
+import net.fabricmc.loom.LoomGradleExtension
 
 import static org.mockito.ArgumentMatchers.any
 import static org.mockito.Mockito.mock
 import static org.mockito.Mockito.when
 
 class GradleTestUtil {
-    static <T> Property<T> mockProperty(T value) {
-        def mock = mock(Property.class)
-        when(mock.get()).thenReturn(Objects.requireNonNull(value))
-        return mock
-    }
+	static <T> Property<T> mockProperty(T value) {
+		def mock = mock(Property.class)
+		when(mock.get()).thenReturn(Objects.requireNonNull(value))
+		return mock
+	}
 
 	static SourceSet mockSourceSet(String name) {
 		def sourceSet = new DefaultSourceSet(name, mockObjectFactory()) {
-			final ExtensionContainer extensions = null
-		}
+					final ExtensionContainer extensions = null
+				}
 		return sourceSet
 	}
 
@@ -88,6 +93,32 @@ class GradleTestUtil {
 
 	static PatternFilterable mockPatternFilterable() {
 		def mock = mock(PatternFilterable.class)
+		return mock
+	}
+
+	static RegularFile mockRegularFile(File file) {
+		def mock = mock(RegularFile.class)
+		when(mock.getAsFile()).thenReturn(file)
+		return mock
+	}
+
+	static RegularFileProperty mockRegularFileProperty(@Nullable File file) {
+		if (file == null) {
+			def mock = mock(RegularFileProperty.class)
+			when(mock.isPresent()).thenReturn(false)
+			return mock
+		}
+
+		def regularFile = mockRegularFile(file.getAbsoluteFile())
+
+		def mock = mock(RegularFileProperty.class)
+		when(mock.get()).thenReturn(regularFile)
+		when(mock.isPresent()).thenReturn(true)
+		return mock
+	}
+
+	static RepositoryHandler mockRepositoryHandler() {
+		def mock = mock(RepositoryHandler.class)
 		return mock
 	}
 }

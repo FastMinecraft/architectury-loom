@@ -24,27 +24,27 @@
 
 package net.fabricmc.loom.configuration.providers.minecraft.mapped;
 
-import java.nio.file.Path;
 import java.util.List;
 
 import dev.architectury.tinyremapper.TinyRemapper;
-import org.gradle.api.Project;
 
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
+import net.fabricmc.loom.configuration.ConfigContext;
 import net.fabricmc.loom.configuration.providers.minecraft.MergedMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
+import net.fabricmc.loom.configuration.providers.minecraft.SingleJarEnvType;
 import net.fabricmc.loom.configuration.providers.minecraft.SingleJarMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.SplitMinecraftProvider;
 import net.fabricmc.loom.util.SidedClassVisitor;
 
 public abstract sealed class SrgMinecraftProvider<M extends MinecraftProvider> extends AbstractMappedMinecraftProvider<M> permits SrgMinecraftProvider.MergedImpl, SrgMinecraftProvider.SingleJarImpl, SrgMinecraftProvider.SplitImpl {
-	public SrgMinecraftProvider(Project project, M minecraftProvider) {
-		super(project, minecraftProvider);
+	public SrgMinecraftProvider(ConfigContext configContext, M minecraftProvider) {
+		super(configContext, minecraftProvider);
 	}
 
 	@Override
-	protected Path getDirectory() {
-		return extension.getMinecraftProvider().workingDir().toPath();
+	public MavenScope getMavenScope() {
+		return MavenScope.GLOBAL;
 	}
 
 	@Override
@@ -53,8 +53,8 @@ public abstract sealed class SrgMinecraftProvider<M extends MinecraftProvider> e
 	}
 
 	public static final class MergedImpl extends SrgMinecraftProvider<MergedMinecraftProvider> implements Merged {
-		public MergedImpl(Project project, MergedMinecraftProvider minecraftProvider) {
-			super(project, minecraftProvider);
+		public MergedImpl(ConfigContext configContext, MergedMinecraftProvider minecraftProvider) {
+			super(configContext, minecraftProvider);
 		}
 
 		@Override
@@ -66,8 +66,8 @@ public abstract sealed class SrgMinecraftProvider<M extends MinecraftProvider> e
 	}
 
 	public static final class SplitImpl extends SrgMinecraftProvider<SplitMinecraftProvider> implements Split {
-		public SplitImpl(Project project, SplitMinecraftProvider minecraftProvider) {
-			super(project, minecraftProvider);
+		public SplitImpl(ConfigContext configContext, SplitMinecraftProvider minecraftProvider) {
+			super(configContext, minecraftProvider);
 		}
 
 		@Override
@@ -87,19 +87,19 @@ public abstract sealed class SrgMinecraftProvider<M extends MinecraftProvider> e
 	}
 
 	public static final class SingleJarImpl extends SrgMinecraftProvider<SingleJarMinecraftProvider> implements SingleJar {
-		private final String env;
+		private final SingleJarEnvType env;
 
-		private SingleJarImpl(Project project, SingleJarMinecraftProvider minecraftProvider, String env) {
-			super(project, minecraftProvider);
+		private SingleJarImpl(ConfigContext configContext, SingleJarMinecraftProvider minecraftProvider, SingleJarEnvType env) {
+			super(configContext, minecraftProvider);
 			this.env = env;
 		}
 
-		public static SingleJarImpl server(Project project, SingleJarMinecraftProvider minecraftProvider) {
-			return new SingleJarImpl(project, minecraftProvider, "server");
+		public static SingleJarImpl server(ConfigContext configContext, SingleJarMinecraftProvider minecraftProvider) {
+			return new SingleJarImpl(configContext, minecraftProvider, SingleJarEnvType.SERVER);
 		}
 
-		public static SingleJarImpl client(Project project, SingleJarMinecraftProvider minecraftProvider) {
-			return new SingleJarImpl(project, minecraftProvider, "client");
+		public static SingleJarImpl client(ConfigContext configContext, SingleJarMinecraftProvider minecraftProvider) {
+			return new SingleJarImpl(configContext, minecraftProvider, SingleJarEnvType.CLIENT);
 		}
 
 		@Override
@@ -110,7 +110,7 @@ public abstract sealed class SrgMinecraftProvider<M extends MinecraftProvider> e
 		}
 
 		@Override
-		public String env() {
+		public SingleJarEnvType env() {
 			return env;
 		}
 	}

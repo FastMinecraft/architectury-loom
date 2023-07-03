@@ -24,53 +24,54 @@
 
 package net.fabricmc.loom.test.unit.forge
 
-import net.fabricmc.loom.configuration.providers.forge.ConfigValue
 import spock.lang.Specification
+
+import net.fabricmc.loom.configuration.providers.forge.ConfigValue
 
 class ConfigValueTest extends Specification {
 	def "bare value is constant"() {
 		when:
-			def value = ConfigValue.of('hello')
+		def value = ConfigValue.of('hello')
 		then:
-			value instanceof ConfigValue.Constant
-			(value as ConfigValue.Constant).value() == 'hello'
+		value instanceof ConfigValue.Constant
+		(value as ConfigValue.Constant).value() == 'hello'
 	}
 
 	def "value with opening brace is constant"() {
 		when:
-			def value = ConfigValue.of('{hello')
+		def value = ConfigValue.of('{hello')
 		then:
-			value instanceof ConfigValue.Constant
-			(value as ConfigValue.Constant).value() == '{hello'
+		value instanceof ConfigValue.Constant
+		(value as ConfigValue.Constant).value() == '{hello'
 	}
 
 	def "value with closing brace is constant"() {
 		when:
-			def value = ConfigValue.of('hello}')
+		def value = ConfigValue.of('hello}')
 		then:
-			value instanceof ConfigValue.Constant
-			(value as ConfigValue.Constant).value() == 'hello}'
+		value instanceof ConfigValue.Constant
+		(value as ConfigValue.Constant).value() == 'hello}'
 	}
 
 	def "value with braces is variable"() {
 		when:
-			def value = ConfigValue.of('{hello}')
+		def value = ConfigValue.of('{hello}')
 		then:
-			value instanceof ConfigValue.Variable
-			(value as ConfigValue.Variable).name() == 'hello'
+		value instanceof ConfigValue.Variable
+		(value as ConfigValue.Variable).name() == 'hello'
 	}
 
 	def "resolving a constant should yield the constant"() {
 		when:
-			def value = ConfigValue.of('constant')
+		def value = ConfigValue.of('constant')
 		then:
-			value.resolve { throw new AssertionError('should not be called!' as Object) } == 'constant'
+		value.resolve { throw new AssertionError('should not be called!' as Object) } == 'constant'
 	}
 
 	def "resolving a variable"() {
 		when:
-			def value = ConfigValue.of('{variable}')
+		def value = ConfigValue.of('{variable}')
 		then:
-			value.resolve { it.name().toUpperCase(Locale.ROOT) } == 'VARIABLE'
+		value.resolve { it.name().toUpperCase(Locale.ROOT) } == 'VARIABLE'
 	}
 }

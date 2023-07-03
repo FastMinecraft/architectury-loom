@@ -31,8 +31,8 @@ import java.util.List;
 import dev.architectury.tinyremapper.NonClassCopyMode;
 import dev.architectury.tinyremapper.OutputConsumerPath;
 import dev.architectury.tinyremapper.TinyRemapper;
-import org.gradle.api.Project;
 
+import net.fabricmc.loom.configuration.ConfigContext;
 import net.fabricmc.loom.configuration.providers.BundleMetadata;
 
 public class SingleJarMinecraftProvider extends MinecraftProvider {
@@ -40,24 +40,24 @@ public class SingleJarMinecraftProvider extends MinecraftProvider {
 
 	private Path minecraftEnvOnlyJar;
 
-	protected SingleJarMinecraftProvider(Project project, Environment environment) {
-		super(project);
+	protected SingleJarMinecraftProvider(ConfigContext configContext, Environment environment) {
+		super(configContext);
 		this.environment = environment;
 	}
 
-	public static SingleJarMinecraftProvider server(Project project) {
-		return new SingleJarMinecraftProvider(project, new Server());
+	public static SingleJarMinecraftProvider server(ConfigContext configContext) {
+		return new SingleJarMinecraftProvider(configContext, new Server());
 	}
 
-	public static SingleJarMinecraftProvider client(Project project) {
-		return new SingleJarMinecraftProvider(project, new Client());
+	public static SingleJarMinecraftProvider client(ConfigContext configContext) {
+		return new SingleJarMinecraftProvider(configContext, new Client());
 	}
 
 	@Override
 	protected void initFiles() {
 		super.initFiles();
 
-		minecraftEnvOnlyJar = path("minecraft-%s-only.jar".formatted(environment.name()));
+		minecraftEnvOnlyJar = path("minecraft-%s-only.jar".formatted(environment.type()));
 	}
 
 	@Override
@@ -68,6 +68,12 @@ public class SingleJarMinecraftProvider extends MinecraftProvider {
 	@Override
 	public void provide() throws Exception {
 		super.provide();
+
+		// Server only JARs are supported on any version, client only JARs are pretty much useless after 1.3.
+		if (provideClient() && getVersionInfo().isVersionOrNewer("2012-07-25T22:00:00+00:00" /* 1.3 release date */)) {
+			getProject().getLogger().warn("Using `clientOnlyMinecraftJar()` is not recommended for Minecraft versions 1.3 or newer.");
+		}
+
 		processJar();
 	}
 
@@ -95,7 +101,7 @@ public class SingleJarMinecraftProvider extends MinecraftProvider {
 			}
 		} catch (Exception e) {
 			Files.deleteIfExists(minecraftEnvOnlyJar);
-			throw new RuntimeException("Failed to process %s only jar".formatted(environment.name()), e);
+			throw new RuntimeException("Failed to process %s only jar".formatted(environment.type()), e);
 		} finally {
 			if (remapper != null) {
 				remapper.finish();
@@ -118,15 +124,15 @@ public class SingleJarMinecraftProvider extends MinecraftProvider {
 	}
 
 	protected interface Environment {
-		String name();
+		SingleJarEnvType type();
 
 		Path getInputJar(SingleJarMinecraftProvider provider) throws Exception;
 	}
 
 	public static final class Server implements Environment {
 		@Override
-		public String name() {
-			return "server";
+		public SingleJarEnvType type() {
+			return SingleJarEnvType.SERVER;
 		}
 
 		@Override
@@ -144,8 +150,8 @@ public class SingleJarMinecraftProvider extends MinecraftProvider {
 
 	public static final class Client implements Environment {
 		@Override
-		public String name() {
-			return "client";
+		public SingleJarEnvType type() {
+			return SingleJarEnvType.CLIENT;
 		}
 
 		@Override

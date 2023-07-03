@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -48,6 +48,7 @@ public class ForgeExtensionImpl implements ForgeExtensionAPI {
 	private final ConfigurableFileCollection accessTransformers;
 	private final SetProperty<String> mixinConfigs;
 	private final Property<Boolean> useCustomMixin;
+	private final Property<Boolean> useForgeLoggerConfig;
 	private final List<String> dataGenMods = new ArrayList<>(); // not a property because it has custom adding logic
 
 	@Inject
@@ -58,6 +59,7 @@ public class ForgeExtensionImpl implements ForgeExtensionAPI {
 		accessTransformers = project.getObjects().fileCollection();
 		mixinConfigs = project.getObjects().setProperty(String.class).empty();
 		useCustomMixin = project.getObjects().property(Boolean.class).convention(true);
+		useForgeLoggerConfig = project.getObjects().property(Boolean.class).convention(false);
 	}
 
 	@Override
@@ -93,6 +95,11 @@ public class ForgeExtensionImpl implements ForgeExtensionAPI {
 	@Override
 	public Property<Boolean> getUseCustomMixin() {
 		return useCustomMixin;
+	}
+
+	@Override
+	public Property<Boolean> getUseForgeLoggerConfig() {
+		return useForgeLoggerConfig;
 	}
 
 	@Override

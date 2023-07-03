@@ -24,9 +24,8 @@
 
 package net.fabricmc.loom.configuration.providers.forge.minecraft;
 
-import org.gradle.api.Project;
-
 import net.fabricmc.loom.LoomGradleExtension;
+import net.fabricmc.loom.configuration.ConfigContext;
 import net.fabricmc.loom.configuration.providers.forge.MinecraftPatchedProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MergedMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.SingleJarMinecraftProvider;
@@ -38,15 +37,15 @@ import net.fabricmc.loom.configuration.providers.minecraft.SingleJarMinecraftPro
 public interface ForgeMinecraftProvider {
 	MinecraftPatchedProvider getPatchedProvider();
 
-	static MergedMinecraftProvider createMerged(Project project) {
-		return LoomGradleExtension.get(project).isForge() ? new MergedForgeMinecraftProvider(project) : new MergedMinecraftProvider(project);
+	static MergedMinecraftProvider createMerged(ConfigContext context) {
+		return LoomGradleExtension.get(context.project()).isForge() ? new MergedForgeMinecraftProvider(context) : new MergedMinecraftProvider(context);
 	}
 
-	static SingleJarMinecraftProvider createServerOnly(Project project) {
-		return LoomGradleExtension.get(project).isForge() ? SingleJarForgeMinecraftProvider.server(project) : SingleJarMinecraftProvider.server(project);
+	static SingleJarMinecraftProvider createServerOnly(ConfigContext context) {
+		return LoomGradleExtension.get(context.project()).isForge() ? SingleJarForgeMinecraftProvider.server(context) : SingleJarMinecraftProvider.server(context);
 	}
 
-	static SingleJarMinecraftProvider createClientOnly(Project project) {
-		return LoomGradleExtension.get(project).isForge() ? SingleJarForgeMinecraftProvider.client(project) : SingleJarMinecraftProvider.client(project);
+	static SingleJarMinecraftProvider createClientOnly(ConfigContext context) {
+		return LoomGradleExtension.get(context.project()).isForge() ? SingleJarForgeMinecraftProvider.client(context) : SingleJarMinecraftProvider.client(context);
 	}
 }

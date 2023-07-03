@@ -40,9 +40,9 @@ import org.apache.commons.io.FileUtils;
 import org.gradle.api.logging.configuration.ConsoleOutput;
 import org.gradle.api.tasks.TaskAction;
 
+import net.fabricmc.loom.configuration.providers.forge.ConfigValue;
 import net.fabricmc.loom.configuration.providers.forge.ForgeRunTemplate;
 import net.fabricmc.loom.configuration.providers.forge.ForgeRunsProvider;
-import net.fabricmc.loom.configuration.providers.forge.ConfigValue;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.MappedMinecraftProvider;
 import net.fabricmc.loom.task.AbstractLoomTask;
@@ -109,21 +109,27 @@ public abstract class GenerateDLIConfigTask extends AbstractLoomTask {
 
 			launchConfig
 					// Should match YarnNamingService.PATH_TO_MAPPINGS in forge-runtime
-					.property("fabric.yarnWithSrg.path", getExtension().getMappingsProvider().tinyMappingsWithSrg.toAbsolutePath().toString())
+					.property("fabric.yarnWithSrg.path", getExtension().getMappingConfiguration().tinyMappingsWithSrg.toAbsolutePath().toString())
 					.property("unprotect.mappings", unprotectMappings)
-
-					.argument("data", "--all")
-					.argument("data", "--mod")
-					.argument("data", String.join(",", getExtension().getForge().getDataGenMods()))
-					.argument("data", "--output")
-					.argument("data", getProject().file("src/generated/resources").getAbsolutePath())
 
 					.property("mixin.env.remapRefMap", "true");
 
+			final List<String> dataGenMods = getExtension().getForge().getDataGenMods();
+
+			// Only apply the hardcoded data arguments if the deprecated data generator API is being used.
+			if (!dataGenMods.isEmpty()) {
+				launchConfig
+						.argument("data", "--all")
+						.argument("data", "--mod")
+						.argument("data", String.join(",", getExtension().getForge().getDataGenMods()))
+						.argument("data", "--output")
+						.argument("data", getProject().file("src/generated/resources").getAbsolutePath());
+			}
+
 			if (PropertyUtil.getAndFinalize(getExtension().getForge().getUseCustomMixin())) {
-				launchConfig.property("mixin.forgeloom.inject.mappings.srg-named", getExtension().getMappingsProvider().getReplacedTarget(getExtension(), "srg").toAbsolutePath().toString());
+				launchConfig.property("mixin.forgeloom.inject.mappings.srg-named", getExtension().getMappingConfiguration().getReplacedTarget(getExtension(), "srg").toAbsolutePath().toString());
 			} else {
-				launchConfig.property("net.minecraftforge.gradle.GradleStart.srg.srg-mcp", getExtension().getMappingsProvider().srgToNamedSrg.toAbsolutePath().toString());
+				launchConfig.property("net.minecraftforge.gradle.GradleStart.srg.srg-mcp", getExtension().getMappingConfiguration().srgToNamedSrg.toAbsolutePath().toString());
 			}
 
 			Set<String> mixinConfigs = PropertyUtil.getAndFinalize(getExtension().getForge().getMixinConfigs());
@@ -171,8 +177,8 @@ public abstract class GenerateDLIConfigTask extends AbstractLoomTask {
 		MappedMinecraftProvider.Split split = (MappedMinecraftProvider.Split) getExtension().getNamedMinecraftProvider();
 
 		return switch (env) {
-		case "client" -> split.getClientOnlyJar().toAbsolutePath().toString();
-		case "common" -> split.getCommonJar().toAbsolutePath().toString();
+		case "client" -> split.getClientOnlyJar().getPath().toAbsolutePath().toString();
+		case "common" -> split.getCommonJar().getPath().toAbsolutePath().toString();
 		default -> throw new UnsupportedOperationException();
 		};
 	}

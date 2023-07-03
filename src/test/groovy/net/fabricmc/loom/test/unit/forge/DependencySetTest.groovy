@@ -24,67 +24,79 @@
 
 package net.fabricmc.loom.test.unit.forge
 
-import net.fabricmc.loom.configuration.providers.forge.ConfigValue
-import net.fabricmc.loom.configuration.providers.forge.mcpconfig.DependencySet
-import net.fabricmc.loom.configuration.providers.forge.mcpconfig.McpConfigStep
 import spock.lang.Shared
 import spock.lang.Specification
 
+import net.fabricmc.loom.configuration.providers.forge.ConfigValue
+import net.fabricmc.loom.configuration.providers.forge.mcpconfig.DependencySet
+import net.fabricmc.loom.configuration.providers.forge.mcpconfig.McpConfigStep
+
 class DependencySetTest extends Specification {
 	/*
-	  orphanA
-	  orphanB
-	  root
-	  -> childA1 -> childA2 --> childAB
-	  -> childB             /
+	 orphanA
+	 orphanB
+	 root
+	 -> childA1 -> childA2 --> childAB
+	 -> childB             /
 	 */
 	@Shared List<McpConfigStep> allSteps = [
-			new McpConfigStep('foo', 'orphanA', [:]),
-			new McpConfigStep('foo', 'orphanB', [:]),
-			new McpConfigStep('bar', 'root', [:]),
-			new McpConfigStep('bar', 'childA1', [input: ConfigValue.of('{rootOutput}')]),
-			new McpConfigStep('bar', 'childA2', [input: ConfigValue.of('{childA1Output}')]),
-			new McpConfigStep('bar', 'childB', [input: ConfigValue.of('{rootOutput}')]),
-			new McpConfigStep(
-					'bar', 'childAB',
-					[inputA: ConfigValue.of('{childA2Output}'), inputB: ConfigValue.of("{childBOutput}")]
-			),
+		new McpConfigStep('foo', 'orphanA', [:]),
+		new McpConfigStep('foo', 'orphanB', [:]),
+		new McpConfigStep('bar', 'root', [:]),
+		new McpConfigStep('bar', 'childA1', [input: ConfigValue.of('{rootOutput}')]),
+		new McpConfigStep('bar', 'childA2', [input: ConfigValue.of('{childA1Output}')]),
+		new McpConfigStep('bar', 'childB', [input: ConfigValue.of('{rootOutput}')]),
+		new McpConfigStep(
+		'bar', 'childAB',
+		[inputA: ConfigValue.of('{childA2Output}'), inputB: ConfigValue.of("{childBOutput}")]
+		),
 	]
 
 	DependencySet dependencySet = new DependencySet(allSteps)
 
 	def "single child"() {
 		when:
-			dependencySet.add('childAB')
-			def executedSteps = dependencySet.buildExecutionSet()
+		dependencySet.add('childAB')
+		def executedSteps = dependencySet.buildExecutionSet()
 		then:
-			executedSteps.toList() == ['root', 'childA1', 'childA2', 'childB', 'childAB']
+		executedSteps.toList() == [
+			'root',
+			'childA1',
+			'childA2',
+			'childB',
+			'childAB'
+		]
 	}
 
 	def "multiple children"() {
 		when:
-			dependencySet.add('childA1')
-			dependencySet.add('orphanB')
-			def executedSteps = dependencySet.buildExecutionSet()
+		dependencySet.add('childA1')
+		dependencySet.add('orphanB')
+		def executedSteps = dependencySet.buildExecutionSet()
 		then:
-			executedSteps.toList() == ['orphanB', 'root', 'childA1']
+		executedSteps.toList() == ['orphanB', 'root', 'childA1']
 	}
 
 	def "skip rule"() {
 		when:
-			dependencySet.add('childAB')
-			dependencySet.skip('childA2')
-			def executedSteps = dependencySet.buildExecutionSet()
+		dependencySet.add('childAB')
+		dependencySet.skip('childA2')
+		def executedSteps = dependencySet.buildExecutionSet()
 		then:
-			executedSteps.toList() == ['root', 'childB', 'childAB']
+		executedSteps.toList() == ['root', 'childB', 'childAB']
 	}
 
 	def "ignore dependencies filter"() {
 		when:
-			dependencySet.add('childAB')
-			dependencySet.ignoreDependenciesFilter = { it.name() == 'childA2' }
-			def executedSteps = dependencySet.buildExecutionSet()
+		dependencySet.add('childAB')
+		dependencySet.ignoreDependenciesFilter = { it.name() == 'childA2' }
+		def executedSteps = dependencySet.buildExecutionSet()
 		then:
-			executedSteps.toList() == ['root', 'childA2', 'childB', 'childAB']
+		executedSteps.toList() == [
+			'root',
+			'childA2',
+			'childB',
+			'childAB'
+		]
 	}
 }

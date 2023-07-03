@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021-2022 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,14 +26,18 @@ package net.fabricmc.loom.util;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import org.gradle.api.Named;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.attributes.Attribute;
 import org.gradle.api.file.FileCollection;
 
 /**
@@ -43,7 +47,8 @@ import org.gradle.api.file.FileCollection;
  */
 public final class DependencyDownloader {
 	private final Project project;
-	private final Set<String> dependencies = new HashSet<>();
+	private final List<DependencyEntry> dependencies = new ArrayList<>();
+	private final Map<Attribute<?>, Object> attributes = new HashMap<>();
 
 	public DependencyDownloader(Project project) {
 		this.project = project;
@@ -56,8 +61,47 @@ public final class DependencyDownloader {
 	 * @return this downloader
 	 */
 	public DependencyDownloader add(String dependencyNotation) {
-		dependencies.add(dependencyNotation);
+		dependencies.add(new DependencyEntry.Notation(dependencyNotation));
 		return this;
+	}
+
+	/**
+	 * Adds all dependencies from a configuration to download.
+	 *
+	 * @param configuration the dependency configuration
+	 * @return this downloader
+	 */
+	public DependencyDownloader addAll(Configuration configuration) {
+		configuration.getAllDependencies().stream()
+				.map(DependencyEntry.Direct::new)
+				.forEach(dependencies::add);
+		return this;
+	}
+
+	/**
+	 * Adds an attribute to control the downloaded artifacts.
+	 *
+	 * @param attribute the attribute
+	 * @param value     the attribute's value
+	 * @param <T> the value type
+	 * @return this downloader
+	 */
+	public <T> DependencyDownloader attribute(Attribute<T> attribute, T value) {
+		attributes.put(attribute, value);
+		return this;
+	}
+
+	/**
+	 * Adds a named attribute to control the downloaded artifacts.
+	 *
+	 * @param attribute the attribute
+	 * @param name      the attribute's name
+	 * @param <T> the value type
+	 * @return this downloader
+	 */
+	public <T extends Named> DependencyDownloader attribute(Attribute<T> attribute, String name) {
+		T value = project.getObjects().named(attribute.getType(), name);
+		return attribute(attribute, value);
 	}
 
 	/**
@@ -76,20 +120,19 @@ public final class DependencyDownloader {
 	 * @param resolve    whether to eagerly resolve the file collection
 	 * @return the resolved files
 	 */
+	@SuppressWarnings("unchecked")
 	public FileCollection download(boolean transitive, boolean resolve) {
 		Dependency[] dependencies = this.dependencies.stream()
-				.map(notation -> {
-					Dependency dependency = project.getDependencies().create(notation);
-
-					if (dependency instanceof ModuleDependency md) {
-						md.setTransitive(transitive);
-					}
-
-					return dependency;
-				}).toArray(Dependency[]::new);
+				.map(entry -> entry.getDependency(project.getDependencies(), transitive))
+				.toArray(Dependency[]::new);
 
 		Configuration config = project.getConfigurations().detachedConfiguration(dependencies);
 		config.setTransitive(transitive);
+		config.attributes(attributes -> {
+			this.attributes.forEach((attribute, value) -> {
+				attributes.attribute((Attribute<Object>) attribute, value);
+			});
+		});
 		FileCollection files = config.fileCollection(dep -> true);
 
 		if (resolve) {
@@ -114,23 +157,6 @@ public final class DependencyDownloader {
 		return new DependencyDownloader(project).add(dependencyNotation).download(transitive, resolve);
 	}
 
-	private static List<Dependency> collectDependencies(Configuration configuration) {
-		List<Dependency> dependencies = new ArrayList<>();
-
-		for (Configuration extendsFrom : configuration.getExtendsFrom()) {
-			dependencies.addAll(collectDependencies(extendsFrom));
-		}
-
-		dependencies.addAll(configuration.getDependencies());
-		return dependencies;
-	}
-
-	private static Configuration copyWith(Project project, Configuration configuration, boolean transitive) {
-		Configuration copy = project.getConfigurations().detachedConfiguration(collectDependencies(configuration).toArray(new Dependency[0]));
-		copy.setTransitive(transitive);
-		return copy;
-	}
-
 	/**
 	 * Resolves a configuration and its superconfigurations.
 	 *
@@ -142,6 +168,33 @@ public final class DependencyDownloader {
 	 * @return a mutable set containing the resolved files of the configuration
 	 */
 	public static Set<File> resolveFiles(Project project, Configuration configuration, boolean transitive) {
-		return copyWith(project, configuration, transitive).resolve();
+		return new DependencyDownloader(project)
+				.addAll(configuration)
+				.download(true, false)
+				.getFiles();
+	}
+
+	private sealed interface DependencyEntry {
+		Dependency getDependency(DependencyHandler dependencies, boolean transitive);
+
+		record Notation(String notation) implements DependencyEntry {
+			@Override
+			public Dependency getDependency(DependencyHandler dependencies, boolean transitive) {
+				Dependency dependency = dependencies.create(notation);
+
+				if (dependency instanceof ModuleDependency md) {
+					md.setTransitive(transitive);
+				}
+
+				return dependency;
+			}
+		}
+
+		record Direct(Dependency dependency) implements DependencyEntry {
+			@Override
+			public Dependency getDependency(DependencyHandler dependencies, boolean transitive) {
+				return dependency;
+			}
+		}
 	}
 }

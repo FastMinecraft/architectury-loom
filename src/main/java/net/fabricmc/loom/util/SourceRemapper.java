@@ -30,14 +30,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import org.cadixdev.lorenz.MappingSet;
 import org.cadixdev.mercury.Mercury;
 import org.cadixdev.mercury.remapper.MercuryRemapper;
+import org.gradle.api.JavaVersion;
 import org.gradle.api.Project;
 import org.gradle.api.internal.project.ProjectInternal;
+import org.gradle.api.provider.Property;
+import org.gradle.api.tasks.compile.JavaCompile;
 import org.gradle.internal.logging.progress.ProgressLogger;
 import org.gradle.internal.logging.progress.ProgressLoggerFactory;
 import org.slf4j.Logger;
@@ -46,33 +51,28 @@ import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.RemapConfigurationSettings;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.build.IntermediaryNamespaces;
-import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
-import net.fabricmc.lorenztiny.TinyMappingsReader;
-import net.fabricmc.mappingio.tree.MemoryMappingTree;
+import net.fabricmc.loom.configuration.providers.mappings.MappingConfiguration;
+import net.fabricmc.loom.task.service.LorenzMappingService;
+import net.fabricmc.loom.util.service.SharedServiceManager;
 
 public class SourceRemapper {
 	private final Project project;
+	private final SharedServiceManager serviceManager;
 	private String from;
 	private String to;
 	private final List<Consumer<ProgressLogger>> remapTasks = new ArrayList<>();
 
 	private Mercury mercury;
 
-	public SourceRemapper(Project project, boolean named) {
-		this(project, named ? IntermediaryNamespaces.intermediary(project) : "named", !named ? IntermediaryNamespaces.intermediary(project) : "named");
+	public SourceRemapper(Project project, SharedServiceManager serviceManager, boolean toNamed) {
+		this(project, serviceManager, toNamed ? IntermediaryNamespaces.intermediary(project) : "named", !toNamed ? IntermediaryNamespaces.intermediary(project) : "named");
 	}
 
-	public SourceRemapper(Project project, String from, String to) {
+	public SourceRemapper(Project project, SharedServiceManager serviceManager, String from, String to) {
 		this.project = project;
+		this.serviceManager = serviceManager;
 		this.from = from;
 		this.to = to;
-	}
-
-	public static void remapSources(Project project, File input, File output, String from, String to, boolean reproducibleFileOrder, boolean preserveFileTimestamps) {
-		SourceRemapper sourceRemapper = new SourceRemapper(project, from, to);
-		sourceRemapper.scheduleRemapSources(input, output, reproducibleFileOrder, preserveFileTimestamps, () -> {
-		});
-		sourceRemapper.remapAll();
 	}
 
 	public void scheduleRemapSources(File source, File destination, boolean reproducibleFileOrder, boolean preserveFileTimestamps, Runnable completionCallback) {
@@ -172,67 +172,75 @@ public class SourceRemapper {
 		}
 
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
-		MappingsProviderImpl mappingsProvider = extension.getMappingsProvider();
+		MappingConfiguration mappingConfiguration = extension.getMappingConfiguration();
 
-		String intermediary = extension.isForge() ? "srg" : "intermediary";
-		int id = -1;
+		MappingSet mappings = LorenzMappingService.create(serviceManager,
+															mappingConfiguration,
+															Objects.requireNonNull(MappingsNamespace.of(from)),
+															Objects.requireNonNull(MappingsNamespace.of(to))
+		).mappings();
 
-		if (from.equals(intermediary) && to.equals("named")) {
-			id = 1;
-		} else if (to.equals(intermediary) && from.equals("named")) {
-			id = 0;
+		Mercury mercury = createMercuryWithClassPath(project, MappingsNamespace.of(to) == MappingsNamespace.NAMED);
+		mercury.setSourceCompatibilityFromRelease(getJavaCompileRelease(project));
+
+		for (File file : extension.getUnmappedModCollection()) {
+			Path path = file.toPath();
+
+			if (Files.isRegularFile(path)) {
+				mercury.getClassPath().add(path);
+			}
 		}
 
-		MappingSet mappings = extension.getOrCreateSrcMappingCache(id, () -> {
-			try {
-				MemoryMappingTree m = (from.equals("srg") || to.equals("srg")) && extension.shouldGenerateSrgTiny() ? mappingsProvider.getMappingsWithSrg() : mappingsProvider.getMappings();
-				project.getLogger().info(":loading " + from + " -> " + to + " source mappings");
-				return new TinyMappingsReader(m, from, to).read();
-			} catch (Exception e) {
-				throw new RuntimeException(e);
+		for (Path intermediaryJar : extension.getMinecraftJars(MappingsNamespace.INTERMEDIARY)) {
+			mercury.getClassPath().add(intermediaryJar);
+		}
+
+		for (Path intermediaryJar : extension.getMinecraftJars(MappingsNamespace.NAMED)) {
+			mercury.getClassPath().add(intermediaryJar);
+		}
+
+		if (extension.isForge()) {
+			for (Path srgJar : extension.getMinecraftJars(MappingsNamespace.SRG)) {
+				mercury.getClassPath().add(srgJar);
 			}
-		});
+		}
 
-		Mercury mercury = extension.getOrCreateSrcMercuryCache(id, () -> {
-			Mercury m = createMercuryWithClassPath(project, to.equals("named"));
+		Set<File> files = project.getConfigurations()
+				.detachedConfiguration(project.getDependencies().create(Constants.Dependencies.JETBRAINS_ANNOTATIONS + Constants.Dependencies.Versions.JETBRAINS_ANNOTATIONS))
+				.resolve();
 
-			for (File file : extension.getUnmappedModCollection()) {
-				Path path = file.toPath();
+		for (File file : files) {
+			mercury.getClassPath().add(file.toPath());
+		}
 
-				if (Files.isRegularFile(path)) {
-					m.getClassPath().add(path);
-				}
-			}
-
-			for (Path intermediaryJar : extension.getMinecraftJars(MappingsNamespace.INTERMEDIARY)) {
-				m.getClassPath().add(intermediaryJar);
-			}
-
-			for (Path intermediaryJar : extension.getMinecraftJars(MappingsNamespace.NAMED)) {
-				m.getClassPath().add(intermediaryJar);
-			}
-
-			if (extension.isForge()) {
-				for (Path srgJar : extension.getMinecraftJars(MappingsNamespace.SRG)) {
-					m.getClassPath().add(srgJar);
-				}
-			}
-
-			Set<File> files = project.getConfigurations()
-					.detachedConfiguration(project.getDependencies().create(Constants.Dependencies.JETBRAINS_ANNOTATIONS + Constants.Dependencies.Versions.JETBRAINS_ANNOTATIONS))
-					.resolve();
-
-			for (File file : files) {
-				m.getClassPath().add(file.toPath());
-			}
-
-			m.getProcessors().add(MercuryRemapper.create(mappings));
-
-			return m;
-		});
+		mercury.getProcessors().add(MercuryRemapper.create(mappings));
 
 		this.mercury = mercury;
-		return mercury;
+		return this.mercury;
+	}
+
+	public static int getJavaCompileRelease(Project project) {
+		AtomicInteger release = new AtomicInteger(-1);
+
+		project.getTasks().withType(JavaCompile.class, javaCompile -> {
+			Property<Integer> releaseProperty = javaCompile.getOptions().getRelease();
+
+			if (!releaseProperty.isPresent()) {
+				return;
+			}
+
+			int compileRelease = releaseProperty.get();
+			release.set(Math.max(release.get(), compileRelease));
+		});
+
+		final int i = release.get();
+
+		if (i < 0) {
+			// Unable to find the release used to compile with, default to the current version
+			return Integer.parseInt(JavaVersion.current().getMajorVersion());
+		}
+
+		return i;
 	}
 
 	public static void copyNonJavaFiles(Path from, Path to, Logger logger, Path source) throws IOException {
@@ -252,11 +260,10 @@ public class SourceRemapper {
 	public static Mercury createMercuryWithClassPath(Project project, boolean toNamed) {
 		Mercury m = new Mercury();
 		m.setGracefulClasspathChecks(true);
-		m.setSourceCompatibility(Constants.MERCURY_SOURCE_VERSION);
 
 		final List<Path> classPath = new ArrayList<>();
 
-		for (File file : project.getConfigurations().getByName(Constants.Configurations.LOADER_DEPENDENCIES).getFiles()) {
+		for (File file : project.getConfigurations().getByName(Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES).getFiles()) {
 			classPath.add(file.toPath());
 		}
 

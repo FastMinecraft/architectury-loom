@@ -32,8 +32,6 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 import com.google.common.base.Suppliers;
-import org.cadixdev.lorenz.MappingSet;
-import org.cadixdev.mercury.Mercury;
 import org.gradle.api.Project;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
@@ -46,11 +44,10 @@ import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.configuration.InstallerData;
 import net.fabricmc.loom.configuration.LoomDependencyManager;
 import net.fabricmc.loom.configuration.accesswidener.AccessWidenerFile;
-import net.fabricmc.loom.configuration.processors.JarProcessorManager;
 import net.fabricmc.loom.configuration.providers.forge.DependencyProviders;
 import net.fabricmc.loom.configuration.providers.forge.ForgeRunsProvider;
 import net.fabricmc.loom.configuration.providers.mappings.IntermediaryMappingsProvider;
-import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
+import net.fabricmc.loom.configuration.providers.mappings.MappingConfiguration;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.IntermediaryMinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.NamedMinecraftProvider;
@@ -68,14 +65,11 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	private final ConfigurableFileCollection unmappedMods;
 	private final Supplier<ForgeExtensionAPI> forgeExtension;
 
-	private final MappingSet[] srcMappingCache = new MappingSet[2];
-	private final Mercury[] srcMercuryCache = new Mercury[2];
 	private final List<AccessWidenerFile> transitiveAccessWideners = new ArrayList<>();
 
 	private LoomDependencyManager dependencyManager;
-	private JarProcessorManager jarProcessorManager;
 	private MinecraftProvider minecraftProvider;
-	private MappingsProviderImpl mappingsProvider;
+	private MappingConfiguration mappingConfiguration;
 	private NamedMinecraftProvider<?> namedMinecraftProvider;
 	private IntermediaryMinecraftProvider<?> intermediaryMinecraftProvider;
 	private SrgMinecraftProvider<?> srgMinecraftProvider;
@@ -107,7 +101,7 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 			provider.getRefreshDeps().set(project.provider(() -> LoomGradleExtension.get(project).refreshDeps()));
 		});
 
-		refreshDeps = project.getGradle().getStartParameter().isRefreshDependencies() || Boolean.getBoolean("loom.refresh");
+		refreshDeps = manualRefreshDeps();
 		multiProjectOptimisation = GradleUtils.getBooleanPropertyProvider(project, Constants.Properties.MULTI_PROJECT_OPTIMISATION);
 
 		if (refreshDeps) {
@@ -136,16 +130,6 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	}
 
 	@Override
-	public void setJarProcessorManager(JarProcessorManager jarProcessorManager) {
-		this.jarProcessorManager = jarProcessorManager;
-	}
-
-	@Override
-	public JarProcessorManager getJarProcessorManager() {
-		return Objects.requireNonNull(jarProcessorManager, "Cannot get JarProcessorManager before it has been setup");
-	}
-
-	@Override
 	public MinecraftProvider getMinecraftProvider() {
 		return Objects.requireNonNull(minecraftProvider, "Cannot get MinecraftProvider before it has been setup");
 	}
@@ -156,13 +140,13 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 	}
 
 	@Override
-	public MappingsProviderImpl getMappingsProvider() {
-		return Objects.requireNonNull(mappingsProvider, "Cannot get MappingsProvider before it has been setup");
+	public MappingConfiguration getMappingConfiguration() {
+		return Objects.requireNonNull(mappingConfiguration, "Cannot get MappingsProvider before it has been setup");
 	}
 
 	@Override
-	public void setMappingsProvider(MappingsProviderImpl mappingsProvider) {
-		this.mappingsProvider = mappingsProvider;
+	public void setMappingConfiguration(MappingConfiguration mappingConfiguration) {
+		this.mappingConfiguration = mappingConfiguration;
 	}
 
 	@Override
@@ -202,18 +186,6 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 				getProject().files(getMinecraftJars(mappingsNamespace).stream().map(Path::toFile).toList())
 			)
 		);
-	}
-
-	@Override
-	public MappingSet getOrCreateSrcMappingCache(int id, Supplier<MappingSet> factory) {
-		if (id < 0 || id >= srcMappingCache.length) return factory.get();
-		return srcMappingCache[id] != null ? srcMappingCache[id] : (srcMappingCache[id] = factory.get());
-	}
-
-	@Override
-	public Mercury getOrCreateSrcMercuryCache(int id, Supplier<Mercury> factory) {
-		if (id < 0 || id >= srcMercuryCache.length) return factory.get();
-		return srcMercuryCache[id] != null ? srcMercuryCache[id] : (srcMercuryCache[id] = factory.get());
 	}
 
 	@Override
@@ -264,11 +236,15 @@ public class LoomGradleExtensionImpl extends LoomGradleExtensionApiImpl implemen
 			builder.offline();
 		}
 
-		if (refreshDeps()) {
+		if (manualRefreshDeps()) {
 			builder.forceDownload();
 		}
 
 		return builder;
+	}
+
+	private boolean manualRefreshDeps() {
+		return project.getGradle().getStartParameter().isRefreshDependencies() || Boolean.getBoolean("loom.refresh");
 	}
 
 	@Override

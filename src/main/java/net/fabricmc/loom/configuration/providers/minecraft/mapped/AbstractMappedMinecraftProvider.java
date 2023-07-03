@@ -24,13 +24,16 @@
 
 package net.fabricmc.loom.configuration.providers.minecraft.mapped;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import dev.architectury.tinyremapper.OutputConsumerPath;
 import dev.architectury.tinyremapper.TinyRemapper;
@@ -38,24 +41,31 @@ import org.gradle.api.Project;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
-import net.fabricmc.loom.configuration.providers.mappings.MappingsProviderImpl;
+import net.fabricmc.loom.configuration.ConfigContext;
+import net.fabricmc.loom.configuration.mods.dependency.LocalMavenHelper;
+import net.fabricmc.loom.configuration.providers.mappings.MappingConfiguration;
+import net.fabricmc.loom.configuration.providers.mappings.TinyMappingsService;
+import net.fabricmc.loom.configuration.providers.minecraft.MinecraftJar;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.configuration.providers.minecraft.SignatureFixerApplyVisitor;
+import net.fabricmc.loom.extension.LoomFiles;
+import net.fabricmc.loom.util.SidedClassVisitor;
 import net.fabricmc.loom.util.TinyRemapperHelper;
+import net.fabricmc.loom.util.service.ScopedSharedServiceManager;
 import net.fabricmc.loom.util.srg.InnerClassRemapper;
 import net.fabricmc.loom.util.srg.RemapObjectHolderVisitor;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
 public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvider> implements MappedMinecraftProvider.ProviderImpl {
 	protected final M minecraftProvider;
-	private final Project project;
+	protected final ConfigContext configContext;
 	protected final LoomGradleExtension extension;
 
-	public AbstractMappedMinecraftProvider(Project project, M minecraftProvider) {
-		this.project = project;
+	public AbstractMappedMinecraftProvider(ConfigContext configContext, M minecraftProvider) {
+		this.configContext = configContext;
 		this.minecraftProvider = minecraftProvider;
-		this.extension = LoomGradleExtension.get(project);
+		this.extension = configContext.extension();
 	}
 
 	public abstract MappingsNamespace getTargetNamespace();
@@ -94,24 +104,55 @@ public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvide
 		}
 	}
 
-	protected abstract Path getDirectory();
-
 	@Override
 	public Path getJar(String name) {
-		return getDirectory().resolve(getName(name) + ".jar");
+		return getMavenHelper(name).getOutputFile(null);
+	}
+
+	public enum MavenScope {
+		// Output files will be stored per project
+		LOCAL(LoomFiles::getLocalMinecraftRepo),
+		// Output files will be stored globally
+		GLOBAL(LoomFiles::getGlobalMinecraftRepo);
+
+		private final Function<LoomFiles, File> fileFunction;
+
+		MavenScope(Function<LoomFiles, File> fileFunction) {
+			this.fileFunction = fileFunction;
+		}
+
+		public Path getRoot(LoomGradleExtension extension) {
+			return fileFunction.apply(extension.getFiles()).toPath();
+		}
+	}
+
+	public abstract MavenScope getMavenScope();
+
+	public LocalMavenHelper getMavenHelper(String name) {
+		return new LocalMavenHelper("net.minecraft", getName(name), getVersion(), null, getMavenScope().getRoot(extension));
 	}
 
 	protected String getName(String name) {
-		return "%sminecraft-%s-%s".formatted(minecraftProvider.getJarPrefix(), name, getTargetNamespace().toString());
+		String computedName = minecraftProvider.getJarPrefix() + "minecraft-" + name;;
+
+		if (getTargetNamespace() != MappingsNamespace.NAMED) {
+			computedName = getTargetNamespace().name() + "-" + name;
+		}
+
+		return computedName.toLowerCase(Locale.ROOT);
+	}
+
+	protected String getVersion() {
+		return "%s-%s".formatted(extension.getMinecraftProvider().minecraftVersion(), extension.getMappingConfiguration().mappingsIdentifier());
 	}
 
 	protected String getDependencyNotation(String name) {
-		return "net.minecraft:%s:%s/%s".formatted(getName(name), extension.getMinecraftProvider().minecraftVersion(), extension.getMappingsProvider().mappingsIdentifier());
+		return "net.minecraft:%s:%s".formatted(getName(name), getVersion());
 	}
 
 	private boolean areOutputsValid(List<RemappedJars> remappedJars) {
 		for (RemappedJars remappedJar : remappedJars) {
-			if (!Files.exists(remappedJar.outputJar())) {
+			if (!getMavenHelper(remappedJar.name()).exists(null)) {
 				return false;
 			}
 		}
@@ -128,22 +169,22 @@ public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvide
 	}
 
 	private void remapJar(RemappedJars remappedJars) throws IOException {
-		final MappingsProviderImpl mappingsProvider = extension.getMappingsProvider();
+		final MappingConfiguration mappingConfiguration = extension.getMappingConfiguration();
 		final String fromM = remappedJars.sourceNamespace().toString();
 		final String toM = getTargetNamespace().toString();
 
-		Files.deleteIfExists(remappedJars.outputJar());
+		Files.deleteIfExists(remappedJars.outputJarPath());
 
 		final Set<String> classNames = extension.isForge() ? InnerClassRemapper.readClassNames(remappedJars.inputJar()) : Set.of();
-		final Map<String, String> remappedSignatures = SignatureFixerApplyVisitor.getRemappedSignatures(getTargetNamespace() == MappingsNamespace.INTERMEDIARY, mappingsProvider, project, toM);
-		TinyRemapper remapper = TinyRemapperHelper.getTinyRemapper(project, fromM, toM, true, (builder) -> {
+		final Map<String, String> remappedSignatures = SignatureFixerApplyVisitor.getRemappedSignatures(getTargetNamespace() == MappingsNamespace.INTERMEDIARY, mappingConfiguration, getProject(), configContext.serviceManager(), toM);
+		TinyRemapper remapper = TinyRemapperHelper.getTinyRemapper(getProject(), configContext.serviceManager(), fromM, toM, true, (builder) -> {
 			builder.extraPostApplyVisitor(new SignatureFixerApplyVisitor(remappedSignatures));
 			configureRemapper(remappedJars, builder);
 		}, classNames);
 
-		try (OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(remappedJars.outputJar()).build()) {
+		try (OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(remappedJars.outputJarPath()).build()) {
 			outputConsumer.addNonClassFiles(remappedJars.inputJar());
-			remapper.readClassPath(TinyRemapperHelper.getMinecraftDependencies(project));
+			remapper.readClassPath(TinyRemapperHelper.getMinecraftCompileLibraries(getProject()));
 
 			for (Path path : remappedJars.remapClasspath()) {
 				remapper.readClassPath(path);
@@ -152,34 +193,61 @@ public abstract class AbstractMappedMinecraftProvider<M extends MinecraftProvide
 			remapper.readInputs(remappedJars.inputJar());
 			remapper.apply(outputConsumer);
 		} catch (Exception e) {
-			throw new RuntimeException("Failed to remap JAR " + remappedJars.inputJar() + " with mappings from " + mappingsProvider.tinyMappings, e);
+			throw new RuntimeException("Failed to remap JAR " + remappedJars.inputJar() + " with mappings from " + mappingConfiguration.tinyMappings, e);
 		} finally {
 			remapper.finish();
 		}
 
+		getMavenHelper(remappedJars.name()).savePom();
+
 		if (extension.isForgeAndOfficial()) {
-			MemoryMappingTree mappingsWithSrg = extension.getMappingsProvider().getMappingsWithSrg();
-			RemapObjectHolderVisitor.remapObjectHolder(remappedJars.outputJar(), "net.minecraftforge.registries.ObjectHolderRegistry", mappingsWithSrg, "srg", "named");
+			try (var serviceManager = new ScopedSharedServiceManager()) {
+				TinyMappingsService mappingsService = extension.getMappingConfiguration().getMappingsService(serviceManager, true);
+				MemoryMappingTree mappingsWithSrg = mappingsService.getMappingTree();
+				RemapObjectHolderVisitor.remapObjectHolder(remappedJars.outputJar().getPath(), "net.minecraftforge.registries.ObjectHolderRegistry", mappingsWithSrg, "srg", "named");
+			}
 		}
 	}
 
 	protected void configureRemapper(RemappedJars remappedJars, TinyRemapper.Builder tinyRemapperBuilder) {
 	}
 
-	private void cleanOutputs(List<RemappedJars> remappedJars) throws IOException {
-		for (RemappedJars remappedJar : remappedJars) {
-			Files.deleteIfExists(remappedJar.outputJar());
+	// Configure the remapper to add the client @Environment annotation to all classes in the client jar.
+	public static void configureSplitRemapper(RemappedJars remappedJars, TinyRemapper.Builder tinyRemapperBuilder) {
+		final MinecraftJar outputJar = remappedJars.outputJar();
+		assert !outputJar.isMerged();
+
+		if (outputJar.includesClient()) {
+			assert !outputJar.includesServer();
+			tinyRemapperBuilder.extraPostApplyVisitor(SidedClassVisitor.CLIENT);
 		}
 	}
 
+	private void cleanOutputs(List<RemappedJars> remappedJars) throws IOException {
+		for (RemappedJars remappedJar : remappedJars) {
+			Files.deleteIfExists(remappedJar.outputJarPath());
+		}
+	}
+
+	public ConfigContext getConfigContext() {
+		return configContext;
+	}
+
 	public Project getProject() {
-		return project;
+		return getConfigContext().project();
 	}
 
 	public M getMinecraftProvider() {
 		return minecraftProvider;
 	}
 
-	public record RemappedJars(Path inputJar, Path outputJar, MappingsNamespace sourceNamespace, Path... remapClasspath) {
+	public record RemappedJars(Path inputJar, MinecraftJar outputJar, MappingsNamespace sourceNamespace, Path... remapClasspath) {
+		public Path outputJarPath() {
+			return outputJar().getPath();
+		}
+
+		public String name() {
+			return outputJar().getName();
+		}
 	}
 }

@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2022 FabricMC
+ * Copyright (c) 2022-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,19 +24,32 @@
 
 package net.fabricmc.loom.util;
 
+import javax.inject.Inject;
+
 import org.apache.commons.io.output.NullOutputStream;
 import org.gradle.api.Action;
 import org.gradle.api.Project;
 import org.gradle.api.logging.LogLevel;
 import org.gradle.api.logging.configuration.ShowStacktrace;
+import org.gradle.api.plugins.JavaPluginExtension;
+import org.gradle.jvm.toolchain.JavaLauncher;
+import org.gradle.jvm.toolchain.JavaToolchainService;
+import org.gradle.jvm.toolchain.JavaToolchainSpec;
 import org.gradle.process.ExecResult;
 import org.gradle.process.JavaExecSpec;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Contains helpers for executing Forge's command line tools
  * with suppressed output streams to prevent annoying log spam.
  */
-public final class ForgeToolExecutor {
+public abstract class ForgeToolExecutor {
+	@Inject
+	protected abstract JavaToolchainService getToolchainService();
+
+	@Inject
+	protected abstract Project getProject();
+
 	public static boolean shouldShowVerboseStdout(Project project) {
 		// if running with INFO or DEBUG logging
 		return project.getGradle().getStartParameter().getLogLevel().compareTo(LogLevel.LIFECYCLE) < 0;
@@ -55,6 +68,12 @@ public final class ForgeToolExecutor {
 	 * @return the execution result
 	 */
 	public static ExecResult exec(Project project, Action<? super JavaExecSpec> configurator) {
+		return project.getObjects().newInstance(ForgeToolExecutor.class)
+				.exec(configurator);
+	}
+
+	private ExecResult exec(Action<? super JavaExecSpec> configurator) {
+		final Project project = getProject();
 		return project.javaexec(spec -> {
 			configurator.execute(spec);
 
@@ -69,6 +88,30 @@ public final class ForgeToolExecutor {
 			} else {
 				spec.setErrorOutput(NullOutputStream.NULL_OUTPUT_STREAM);
 			}
+
+			// Use project toolchain for executing if possible.
+			// Note: This feature cannot be tested using the test kit since
+			//  - Gradle disables native services in test kit environments.
+			//  - The only resolver plugin I could find, foojay-resolver,
+			//    requires the services for finding the OS architecture.
+			final @Nullable String executable = findJavaToolchainExecutable(project);
+
+			if (executable != null) {
+				spec.setExecutable(executable);
+			}
 		});
+	}
+
+	private @Nullable String findJavaToolchainExecutable(Project project) {
+		final JavaPluginExtension java = project.getExtensions().getByType(JavaPluginExtension.class);
+		final JavaToolchainSpec toolchain = java.getToolchain();
+
+		if (!toolchain.getLanguageVersion().isPresent()) {
+			// Toolchain not configured, we'll use the runtime Java version.
+			return null;
+		}
+
+		final JavaLauncher launcher = getToolchainService().launcherFor(toolchain).get();
+		return launcher.getExecutablePath().getAsFile().getAbsolutePath();
 	}
 }

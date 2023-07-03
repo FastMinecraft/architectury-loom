@@ -38,7 +38,6 @@ import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.UnknownTaskException;
 import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.plugins.BasePluginConvention;
 import org.gradle.api.plugins.BasePluginExtension;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.provider.Property;
@@ -71,7 +70,9 @@ public class MixinExtensionImpl extends MixinExtensionApiImpl implements MixinEx
 		String defaultRefmapName = project.getExtensions().getByType(BasePluginExtension.class).getArchivesName().get() + "-refmap.json";
 
 		if (project.getRootProject() != project) {
-			defaultRefmapName = project.getConvention().getPlugin(BasePluginConvention.class).getArchivesBaseName() + "-" + project.getPath().replaceFirst(":", "").replace(':', '_') + "-refmap.json";
+			final String archivesName = project.getExtensions().getByType(BasePluginExtension.class).getArchivesName().get();
+			final String path = project.getPath().substring(1).replace(':', '_');
+			defaultRefmapName = "%s-%s-refmap.json".formatted(archivesName, path);
 		}
 
 		project.getLogger().info("Could not find refmap definition, will be using default name: " + defaultRefmapName);

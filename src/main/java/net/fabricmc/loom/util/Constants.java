@@ -24,7 +24,6 @@
 
 package net.fabricmc.loom.util;
 
-import org.eclipse.jdt.core.JavaCore;
 import org.objectweb.asm.Opcodes;
 
 public class Constants {
@@ -36,8 +35,6 @@ public class Constants {
 	public static final String FABRIC_REPOSITORY = "https://maven.fabricmc.net/";
 
 	public static final int ASM_VERSION = Opcodes.ASM9;
-	public static final String MERCURY_SOURCE_VERSION = JavaCore.VERSION_15;
-	// TODO: once we update Mercury: public static final String MERCURY_SOURCE_VERSION = JavaCore.VERSION_17;
 
 	private Constants() {
 	}
@@ -50,15 +47,24 @@ public class Constants {
 		public static final String MOD_COMPILE_CLASSPATH_MAPPED = "modCompileClasspathMapped";
 		public static final String INCLUDE = "include";
 		public static final String MINECRAFT = "minecraft";
+
+		public static final String MINECRAFT_COMPILE_LIBRARIES = "minecraftLibraries";
+		public static final String MINECRAFT_RUNTIME_LIBRARIES = "minecraftRuntimeLibraries";
+
 		/**
-		 * The server specific configuration will be empty when using a legacy (pre 21w38a server jar)
+		 * These configurations contain the minecraft client libraries.
+		 */
+		public static final String MINECRAFT_CLIENT_COMPILE_LIBRARIES = "minecraftClientLibraries";
+		public static final String MINECRAFT_CLIENT_RUNTIME_LIBRARIES = "minecraftClientRuntimeLibraries";
+
+		/**
+		 * The server specific configurations will be empty when using a legacy (pre 21w38a server jar)
 		 * find the client only dependencies on the "minecraftLibraries" config.
 		 */
-		public static final String MINECRAFT_SERVER_DEPENDENCIES = "minecraftServerLibraries";
-		public static final String MINECRAFT_DEPENDENCIES = "minecraftLibraries";
-		public static final String MINECRAFT_RUNTIME_DEPENDENCIES = "minecraftRuntimeOnlyLibraries";
+		public static final String MINECRAFT_SERVER_COMPILE_LIBRARIES = "minecraftServerLibraries";
+		public static final String MINECRAFT_SERVER_RUNTIME_LIBRARIES = "minecraftServerRuntimeLibraries";
 		/**
-		 * Not used on Minecraft 1.19-pre1 or later. Natives are all loaded from the classpath.
+		 * Before Minecraft 1.19-pre1 this contains libraries that need to be extracted otherwise this goes on the runtime classpath.
 		 */
 		public static final String MINECRAFT_NATIVES = "minecraftNatives";
 		public static final String MAPPINGS = "mappings";
@@ -76,7 +82,6 @@ public class Constants {
 		 * {@link #FORGE_RUNTIME_LIBRARY forgeRuntimeLibrary} is for that instead.
 		 */
 		public static final String FORGE_DEPENDENCIES = "forgeDependencies";
-		public static final String FORGE_NAMED = "forgeNamed";
 		/**
 		 * "Extra" runtime dependencies on Forge. Contains the Minecraft resources
 		 * and {@linkplain Dependencies#FORGE_RUNTIME the Architectury Loom runtime}.
@@ -126,13 +131,13 @@ public class Constants {
 		 * Constants for versions of dependencies.
 		 */
 		public static final class Versions {
-			public static final String MIXIN_COMPILE_EXTENSIONS = "0.5.0";
+			public static final String MIXIN_COMPILE_EXTENSIONS = "0.6.0";
 			public static final String DEV_LAUNCH_INJECTOR = "0.2.1+build.8";
 			public static final String TERMINAL_CONSOLE_APPENDER = "1.2.0";
-			public static final String JETBRAINS_ANNOTATIONS = "23.0.0";
+			public static final String JETBRAINS_ANNOTATIONS = "24.0.1";
 			public static final String NATIVE_SUPPORT_VERSION = "1.0.1";
 			public static final String JAVAX_ANNOTATIONS = "3.0.2";
-			public static final String FORGE_RUNTIME = "1.1.3";
+			public static final String FORGE_RUNTIME = "1.1.8";
 			public static final String ACCESS_TRANSFORMERS = "3.0.1";
 			public static final String ACCESS_TRANSFORMERS_NEW = "8.0.5";
 			public static final String UNPROTECT = "1.2.0";
@@ -176,6 +181,14 @@ public class Constants {
 		public static final String PROVIDED_JAVADOC = "loom:provided_javadoc";
 	}
 
+	public static final class Properties {
+		public static final String MULTI_PROJECT_OPTIMISATION = "fabric.loom.multiProjectOptimisation";
+		public static final String DONT_REMAP = "fabric.loom.dontRemap";
+		public static final String DISABLE_REMAPPED_VARIANTS = "fabric.loom.disableRemappedVariants";
+		public static final String DISABLE_PROJECT_DEPENDENT_MODS = "fabric.loom.disableProjectDependentMods";
+		public static final String LIBRARY_PROCESSORS = "fabric.loom.libraryProcessors";
+	}
+
 	public static final class Forge {
 		public static final String UNDETERMINED_MAIN_CLASS = "[Forge] Main class has not been determined yet!";
 		public static final String ACCESS_TRANSFORMER_PATH = "META-INF/accesstransformer.cfg";
@@ -183,11 +196,5 @@ public class Constants {
 
 		private Forge() {
 		}
-	}
-
-	public static final class Properties {
-		public static final String MULTI_PROJECT_OPTIMISATION = "fabric.loom.multiProjectOptimisation";
-		public static final String DONT_REMAP = "fabric.loom.dontRemap";
-		public static final String DISABLE_REMAPPED_VARIANTS = "fabric.loom.disableRemappedVariants";
 	}
 }

@@ -1,15 +1,15 @@
 pluginManagement {
-    plugins {
-        id 'dev.architectury.loom'
-    }
+	plugins {
+		id 'dev.architectury.loom'
+	}
 }
 
 plugins {
-    id 'dev.architectury.loom'
+	id 'dev.architectury.loom'
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+	repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
 }
 
 include 'basic'

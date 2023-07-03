@@ -25,241 +25,233 @@
 package net.fabricmc.loom.test.util
 
 import groovy.transform.Immutable
-import net.fabricmc.loom.test.LoomTestConstants
-import net.fabricmc.loom.util.Constants
-import net.fabricmc.loom.util.ZipUtils
 import org.apache.commons.io.FileUtils
 import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
 import spock.lang.Shared
 
+import net.fabricmc.loom.test.LoomTestConstants
+import net.fabricmc.loom.util.Constants
+import net.fabricmc.loom.util.ZipUtils
+
 trait GradleProjectTestTrait {
-    @Lazy
-    @Shared
-    private static File sharedProjectDir = File.createTempDir()
-    @Lazy
-    @Shared
-    private static File sharedGradleHomeDir = File.createTempDir()
+	@Lazy
+	@Shared
+	private static File sharedProjectDir = File.createTempDir()
+	private static File gradleHomeDir = new File(LoomTestConstants.TEST_DIR, "integration/gradle_home")
 
-    GradleProject gradleProject(Map options) {
-        String gradleVersion = options.version as String ?: LoomTestConstants.DEFAULT_GRADLE
-        String warningMode = options.warningMode as String ?: "fail"
-        File projectDir = options.projectDir as File ?: options.sharedFiles ? sharedProjectDir : File.createTempDir()
-        File gradleHomeDir = options.gradleHomeDir as File ?: options.sharedFiles ? sharedGradleHomeDir : File.createTempDir()
+	GradleProject gradleProject(Map options) {
+		String gradleVersion = options.version as String ?: LoomTestConstants.DEFAULT_GRADLE
+		String warningMode = options.warningMode as String ?: "fail"
+		File projectDir = options.projectDir as File ?: options.sharedFiles ? sharedProjectDir : File.createTempDir()
+		File gradleHomeDir = gradleHomeDir
 
-		// Useful for faster local testing.
-		def homeDirOverride = System.getProperty("fabric.loom.test.homeDir")
+		setupProject(options, projectDir)
 
-		if (homeDirOverride) {
-			gradleHomeDir = new File(homeDirOverride)
+		println([
+			projectDir: projectDir.absolutePath,
+			gradleHomeDir: gradleHomeDir.absolutePath
+		])
+
+		return new GradleProject(
+				gradleVersion: gradleVersion,
+				projectDir: projectDir.absolutePath,
+				gradleHomeDir: gradleHomeDir.absolutePath,
+				warningMode: warningMode
+				)
+	}
+
+	private void setupProject(Map options, File projectDir) {
+		if (options.project) {
+			copyProjectFromResources(options.project as String, projectDir)
+			return
 		}
 
-        setupProject(options, projectDir)
+		if (options.repo) {
+			String repo  = options.repo
+			String commit = options.commit
 
-        println([
-            projectDir: projectDir.absolutePath,
-            gradleHomeDir: gradleHomeDir.absolutePath
-        ])
+			if (options.allowExistingRepo && projectDir.listFiles()?.length > 0) {
+				return
+			}
 
-        return new GradleProject(
-                gradleVersion: gradleVersion,
-                projectDir: projectDir.absolutePath,
-                gradleHomeDir: gradleHomeDir.absolutePath,
-                warningMode: warningMode
-        )
-    }
+			exec(projectDir, "git", "clone", repo, ".")
+			exec(projectDir, "git", "checkout", commit)
 
-    private void setupProject(Map options, File projectDir) {
-        if (options.project) {
-            copyProjectFromResources(options.project as String, projectDir)
-            return
-        }
+			if (options.patch) {
+				def patchFile = new File("src/test/resources/patches/${options.patch}.patch")
 
-        if (options.repo) {
-            String repo  = options.repo
-            String commit = options.commit
+				if (!patchFile.exists()) {
+					throw new FileNotFoundException("Could not find patch file at: " + patchFile.absolutePath)
+				}
 
-            if (options.allowExistingRepo && projectDir.listFiles()?.length > 0) {
-                return
-            }
+				exec(projectDir, "git", "apply", patchFile.absolutePath)
+			}
 
-            exec(projectDir, "git", "clone", repo, ".")
-            exec(projectDir, "git", "checkout", commit)
+			return
+		}
 
-            if (options.patch) {
-                def patchFile = new File("src/test/resources/patches/${options.patch}.patch")
+		throw new UnsupportedOperationException("No project setup method was supplied")
+	}
 
-                if (!patchFile.exists()) {
-                    throw new FileNotFoundException("Could not find patch file at: " + patchFile.absolutePath)
-                }
+	private void exec(File projectDir, String... args) {
+		projectDir.mkdirs()
+		def process = args.execute([], projectDir)
+		process.consumeProcessOutput(System.out, System.err)
 
-                exec(projectDir, "git", "apply", patchFile.absolutePath)
-            }
+		def exitCode = process.waitFor()
 
-            return
-        }
+		if (exitCode != 0) {
+			throw new RuntimeException("Command failed with exit code: $exitCode")
+		}
+	}
 
-        throw new UnsupportedOperationException("No project setup method was supplied")
-    }
+	private void copyProjectFromResources(String project, File projectDir) {
+		def projectSourceDir = new File("src/test/resources/projects/$project")
 
-    private void exec(File projectDir, String... args) {
-        projectDir.mkdirs()
-        def process = args.execute([], projectDir)
-        process.consumeProcessOutput(System.out, System.err)
+		if (!projectSourceDir.exists()) {
+			throw new FileNotFoundException("Failed to find project directory at: $projectSourceDir.absolutePath")
+		}
 
-        def exitCode = process.waitFor()
+		def settingsGradle = new File(projectDir, "settings.gradle")
 
-        if (exitCode != 0) {
-             throw new RuntimeException("Command failed with exit code: $exitCode")
-        }
-    }
+		// Cleanup some basic things if they already exists
+		new File(projectDir, "src").deleteDir()
+		new File(projectDir, "build.gradle").delete()
+		settingsGradle.delete()
 
-    private void copyProjectFromResources(String project, File projectDir) {
-        def projectSourceDir = new File("src/test/resources/projects/$project")
+		projectSourceDir.eachFileRecurse { file ->
+			if (file.isDirectory()) {
+				return
+			}
 
-        if (!projectSourceDir.exists()) {
-            throw new FileNotFoundException("Failed to find project directory at: $projectSourceDir.absolutePath")
-        }
+			def path = file.path.replace(projectSourceDir.path, "")
 
-        def settingsGradle = new File(projectDir, "settings.gradle")
+			File tempFile = new File(projectDir, path)
 
-        // Cleanup some basic things if they already exists
-        new File(projectDir, "src").deleteDir()
-        new File(projectDir, "build.gradle").delete()
-        settingsGradle.delete()
+			if (tempFile.exists()) {
+				tempFile.delete()
+			}
 
-        projectSourceDir.eachFileRecurse { file ->
-            if (file.isDirectory()) {
-                return
-            }
+			tempFile.parentFile.mkdirs()
+			tempFile.bytes = file.bytes
+		}
 
-            def path = file.path.replace(projectSourceDir.path, "")
+		if (!settingsGradle.exists()) {
+			settingsGradle.createNewFile()
+		}
+	}
 
-            File tempFile = new File(projectDir, path)
+	@Immutable
+	static class GradleProject {
+		private String gradleVersion
+		private String projectDir
+		private String gradleHomeDir
+		private String warningMode
+		private boolean useBuildSrc
 
-            if (tempFile.exists()) {
-                tempFile.delete()
-            }
+		BuildResult run(Map options) {
+			// Setup the system props to tell loom that its running in a test env
+			// And override the CI check to ensure that everything is ran
+			System.setProperty("fabric.loom.test", "true")
+			System.setProperty("fabric.loom.ci", "false")
+			System.setProperty("maven.repo.local", mavenLocalDir.absolutePath)
 
-            tempFile.parentFile.mkdirs()
-            tempFile.bytes = file.bytes
-        }
+			def runner = this.runner
+			def args = []
 
-        if (!settingsGradle.exists()) {
-            settingsGradle.createNewFile()
-        }
-    }
+			if (options.task) {
+				args << options.task
+			}
 
-    @Immutable
-    static class GradleProject {
-        private String gradleVersion
-        private String projectDir
-        private String gradleHomeDir
-        private String warningMode
-        private boolean useBuildSrc
+			args.addAll(options.tasks ?: [])
 
-        BuildResult run(Map options) {
-            // Setup the system props to tell loom that its running in a test env
-            // And override the CI check to ensure that everything is ran
-            System.setProperty("fabric.loom.test", "true")
-            System.setProperty("fabric.loom.ci", "false")
-            System.setProperty("maven.repo.local", mavenLocalDir.absolutePath)
-
-            def runner = this.runner
-            def args = []
-
-            if (options.task) {
-                args << options.task
-            }
-
-            args.addAll(options.tasks ?: [])
-
-            args << "--stacktrace"
+			args << "--stacktrace"
 			args << "--parallel"
-            args << "--warning-mode" << warningMode
-            args << "--gradle-user-home" << gradleHomeDir
-            args.addAll(options.args ?: [])
+			args << "--warning-mode" << warningMode
+			args << "--gradle-user-home" << gradleHomeDir
+			args.addAll(options.args ?: [])
 
-            runner.withArguments(args as String[])
+			runner.withArguments(args as String[])
 
-            if (useBuildSrc) {
-                writeBuildSrcDeps(runner)
-            }
+			if (useBuildSrc) {
+				writeBuildSrcDeps(runner)
+			}
 
-            return options.expectFailure ? runner.buildAndFail() : runner.build()
-        }
+			return options.expectFailure ? runner.buildAndFail() : runner.build()
+		}
 
-        private GradleRunner getRunner() {
-            return GradleRunner.create()
-                    .withProjectDir(getProjectDir())
-                    .withPluginClasspath()
-                    .withGradleVersion(gradleVersion)
-                    .forwardOutput()
-                    .withDebug(true)
-        }
+		private GradleRunner getRunner() {
+			return GradleRunner.create()
+					.withProjectDir(getProjectDir())
+					.withPluginClasspath()
+					.withGradleVersion(gradleVersion)
+					.forwardOutput()
+					.withDebug(true)
+		}
 
-        File getProjectDir() {
-            return new File(projectDir)
-        }
+		File getProjectDir() {
+			return new File(projectDir)
+		}
 
-        File getGradleHomeDir() {
-            return new File(gradleHomeDir)
-        }
+		File getGradleHomeDir() {
+			return new File(gradleHomeDir)
+		}
 
-        File getOutputFile(String filename) {
-            return new File(getProjectDir(), "build/libs/$filename")
-        }
+		File getOutputFile(String filename) {
+			return new File(getProjectDir(), "build/libs/$filename")
+		}
 
-        File getMavenLocalDir() {
-            return new File(gradleHomeDir, "m2")
-        }
+		File getMavenLocalDir() {
+			return new File(gradleHomeDir, "m2")
+		}
 
-        void printOutputFiles() {
-            new File(getProjectDir(), "build/libs/").listFiles().each {
-                println(it.name)
-            }
-        }
+		void printOutputFiles() {
+			new File(getProjectDir(), "build/libs/").listFiles().each {
+				println(it.name)
+			}
+		}
 
-        File getBuildGradle() {
-            return new File(getProjectDir(), "build.gradle")
-        }
+		File getBuildGradle() {
+			return new File(getProjectDir(), "build.gradle")
+		}
 
-        File getGradleProperties() {
-            return new File(getProjectDir(), "gradle.properties")
-        }
+		File getGradleProperties() {
+			return new File(getProjectDir(), "gradle.properties")
+		}
 
-        String getOutputZipEntry(String filename, String entryName) {
-            def file = getOutputFile(filename)
-            def bytes = ZipUtils.unpackNullable(file.toPath(), entryName)
+		String getOutputZipEntry(String filename, String entryName) {
+			def file = getOutputFile(filename)
+			def bytes = ZipUtils.unpackNullable(file.toPath(), entryName)
 
-            if (bytes == null) {
-                throw new FileNotFoundException("Could not find ${entryName} in ${entryName}")
-            }
+			if (bytes == null) {
+				throw new FileNotFoundException("Could not find ${entryName} in ${entryName}")
+			}
 
-            new String(bytes as byte[])
-        }
+			new String(bytes as byte[])
+		}
 
-        boolean hasOutputZipEntry(String filename, String entryName) {
-            def file = getOutputFile(filename)
-            return ZipUtils.unpackNullable(file.toPath(), entryName) != null
-        }
+		boolean hasOutputZipEntry(String filename, String entryName) {
+			def file = getOutputFile(filename)
+			return ZipUtils.unpackNullable(file.toPath(), entryName) != null
+		}
 
-        File getGeneratedSources(String mappings) {
-            return new File(getGradleHomeDir(), "caches/fabric-loom/${mappings}/minecraft-merged-named-sources.jar")
-        }
+		File getGeneratedSources(String mappings) {
+			return new File(getGradleHomeDir(), "caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged/${mappings}/minecraft-merged-${mappings}-sources.jar")
+		}
 
-        File getGeneratedLocalSources(String mappings) {
-            return new File(getProjectDir(), ".gradle/loom-cache/${mappings}/minecraft-project-@-merged-named-sources.jar")
-        }
+		File getGeneratedLocalSources(String mappings) {
+			return new File(getProjectDir(), ".gradle/loom-cache/minecraftMaven/net/minecraft/minecraft-merged-project-root/${mappings}/minecraft-merged-project-root-${mappings}-sources.jar")
+		}
 
-        void buildSrc(String name) {
-            useBuildSrc = true
+		void buildSrc(String name) {
+			useBuildSrc = true
 
-            def buildSrcDir = new File(projectDir, "buildSrc")
-            buildSrcDir.mkdirs()
+			def buildSrcDir = new File(projectDir, "buildSrc")
+			buildSrcDir.mkdirs()
 
-            def pluginClass = "net.fabricmc.loom.test.integration.buildSrc.${name}.TestPlugin"
-            new File(buildSrcDir, "build.gradle") << """
+			def pluginClass = "net.fabricmc.loom.test.integration.buildSrc.${name}.TestPlugin"
+			new File(buildSrcDir, "build.gradle") << """
                 plugins {
                     id 'groovy-gradle-plugin'
                     id 'groovy'
@@ -275,45 +267,45 @@ trait GradleProjectTestTrait {
                 }
             """
 
-            new File(buildSrcDir, "settings.gradle") << '''
+			new File(buildSrcDir, "settings.gradle") << '''
                 rootProject.name='loom-test-plugin'
             '''
 
-            // Patch the new plugin into the end of the plugins block
-            def matcher = buildGradle.text =~ /(?s)plugins \{(?<ids>.*)}/
-            assert matcher.find()
-            def ids = matcher.group("ids")
+			// Patch the new plugin into the end of the plugins block
+			def matcher = buildGradle.text =~ /(?s)plugins \{(?<ids>.*?)}/
+			assert matcher.find()
+			def ids = matcher.group("ids")
 
-            def pluginBlock = """
+			def pluginBlock = """
                 plugins {
                     ${ids}
                     id 'loom-test-plugin'
                 }
             """
 
-            buildGradle.text = buildGradle.text.replaceAll("(?s)(plugins \\{.*})", pluginBlock)
+			buildGradle.text = buildGradle.text.replaceAll("(?s)(plugins \\{.*?})", pluginBlock)
 
-            def sourceSrc = new File("src/test/groovy/net/fabricmc/loom/test/integration/buildSrc/" + name)
-            def targetSrc = new File(buildSrcDir, "src/main/groovy/net/fabricmc/loom/test/integration/buildSrc/" + name)
+			def sourceSrc = new File("src/test/groovy/net/fabricmc/loom/test/integration/buildSrc/" + name)
+			def targetSrc = new File(buildSrcDir, "src/main/groovy/net/fabricmc/loom/test/integration/buildSrc/" + name)
 
-            FileUtils.copyDirectory(sourceSrc, targetSrc)
-        }
+			FileUtils.copyDirectory(sourceSrc, targetSrc)
+		}
 
-        void writeBuildSrcDeps(GradleRunner runner) {
-            def dependencies = ""
-            runner.pluginClasspath.forEach { File file ->
-                dependencies += "implementation files('${file.absolutePath.replace("\\", "\\\\")}')\n"
-            }
+		void writeBuildSrcDeps(GradleRunner runner) {
+			def dependencies = ""
+			runner.pluginClasspath.forEach { File file ->
+				dependencies += "implementation files('${file.absolutePath.replace("\\", "\\\\")}')\n"
+			}
 
-            new File(projectDir, "buildSrc/build.gradle") << """
+			new File(projectDir, "buildSrc/build.gradle") << """
                 dependencies {
                     ${dependencies}
                 }
             """
-        }
+		}
 
 		void enableMultiProjectOptimisation() {
 			getGradleProperties() << "\n${Constants.Properties.MULTI_PROJECT_OPTIMISATION}=true"
 		}
-    }
+	}
 }

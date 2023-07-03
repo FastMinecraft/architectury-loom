@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,47 +24,64 @@
 
 package net.fabricmc.loom.test.integration.forge
 
-import net.fabricmc.loom.test.util.GradleProjectTestTrait
 import spock.lang.Specification
+import spock.lang.Unroll
+
+import net.fabricmc.loom.test.util.GradleProjectTestTrait
 
 import static net.fabricmc.loom.test.LoomTestConstants.*
 import static org.gradle.testkit.runner.TaskOutcome.SUCCESS
 
 class Aw2AtTest extends Specification implements GradleProjectTestTrait {
-    def "build"() { // 1.17+ uses a new srg naming pattern
+	@Unroll
+	def "build (gradle #version)"() {
+		// 1.17+ uses a new srg naming pattern
 		setup:
-			def gradle = gradleProject(project: "forge/aw2At", version: DEFAULT_GRADLE)
+		def gradle = gradleProject(project: "forge/aw2At", version: version)
 
 		when:
-			def result = gradle.run(task: "build")
+		def result = gradle.run(task: "build")
 
 		then:
-			result.task(":build").outcome == SUCCESS
-			gradle.getOutputZipEntry("fabric-example-mod-1.0.0.jar", "META-INF/accesstransformer.cfg") == expected(gradle).replaceAll('\r', '')
-    }
+		result.task(":build").outcome == SUCCESS
+		gradle.getOutputZipEntry("fabric-example-mod-1.0.0.jar", "META-INF/accesstransformer.cfg") == expected(gradle).replaceAll('\r', '')
 
-	def "legacy build (mojmap)"() { // old 1.16 srg names
-		setup:
-			def gradle = gradleProject(project: "forge/legacyAw2AtMojmap", version: DEFAULT_GRADLE)
-
-		when:
-			def result = gradle.run(task: "build")
-
-		then:
-			result.task(":build").outcome == SUCCESS
-			gradle.getOutputZipEntry("fabric-example-mod-1.0.0.jar", "META-INF/accesstransformer.cfg") == expected(gradle).replaceAll('\r', '')
+		where:
+		version << STANDARD_TEST_VERSIONS
 	}
 
-	def "legacy build (yarn)"() { // old 1.16 srg names
+	@Unroll
+	def "legacy build (mojmap, gradle #version)"() {
+		// old 1.16 srg names
 		setup:
-			def gradle = gradleProject(project: "forge/legacyAw2AtYarn", version: DEFAULT_GRADLE)
+		def gradle = gradleProject(project: "forge/legacyAw2AtMojmap", version: DEFAULT_GRADLE)
 
 		when:
-			def result = gradle.run(task: "build")
+		def result = gradle.run(task: "build")
 
 		then:
-			result.task(":build").outcome == SUCCESS
-			gradle.getOutputZipEntry("fabric-example-mod-1.0.0.jar", "META-INF/accesstransformer.cfg") == expected(gradle).replaceAll('\r', '')
+		result.task(":build").outcome == SUCCESS
+		gradle.getOutputZipEntry("fabric-example-mod-1.0.0.jar", "META-INF/accesstransformer.cfg") == expected(gradle).replaceAll('\r', '')
+
+		where:
+		version << STANDARD_TEST_VERSIONS
+	}
+
+	@Unroll
+	def "legacy build (yarn, gradle #version)"() {
+		// old 1.16 srg names
+		setup:
+		def gradle = gradleProject(project: "forge/legacyAw2AtYarn", version: DEFAULT_GRADLE)
+
+		when:
+		def result = gradle.run(task: "build")
+
+		then:
+		result.task(":build").outcome == SUCCESS
+		gradle.getOutputZipEntry("fabric-example-mod-1.0.0.jar", "META-INF/accesstransformer.cfg") == expected(gradle).replaceAll('\r', '')
+
+		where:
+		version << STANDARD_TEST_VERSIONS
 	}
 
 	private static String expected(GradleProject gradle) {

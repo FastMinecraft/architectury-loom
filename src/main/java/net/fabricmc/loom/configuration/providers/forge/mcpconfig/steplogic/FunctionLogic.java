@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2022 FabricMC
+ * Copyright (c) 2022-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -43,7 +43,10 @@ public final class FunctionLogic implements StepLogic {
 
 	@Override
 	public void execute(ExecutionContext context) throws IOException {
-		context.setOutput("output");
+		// These are almost always jars, and it's expected by some tools such as ForgeFlower.
+		// The other tools seem to work with the name containing .jar anyway.
+		// Technically, FG supports an "outputExtension" config value for steps, but it's not used in practice.
+		context.setOutput("output.jar");
 		Path jar = context.download(function.getDownloadUrl());
 		String mainClass;
 

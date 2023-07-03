@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,10 +31,12 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 
 import org.gradle.api.Named;
 import org.gradle.api.Project;
+import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.SourceSet;
 import org.jetbrains.annotations.ApiStatus;
 
@@ -44,7 +46,7 @@ import net.fabricmc.loom.configuration.providers.forge.ForgeRunsProvider;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.ModPlatform;
-import net.fabricmc.loom.util.OperatingSystem;
+import net.fabricmc.loom.util.Platform;
 import net.fabricmc.loom.util.gradle.SourceSetHelper;
 
 public final class RunConfigSettings implements Named {
@@ -79,6 +81,14 @@ public final class RunConfigSettings implements Named {
 	private String defaultMainClass;
 
 	/**
+	 * The main class of the run configuration.
+	 *
+	 * <p>If unset, {@link #defaultMainClass} is used as the fallback, including the overwritten main class
+	 * from installer files.
+	 */
+	private final Property<String> mainClass;
+
+	/**
 	 * The source set getter, which obtains the source set from the given project.
 	 */
 	private Function<Project, SourceSet> source;
@@ -104,8 +114,7 @@ public final class RunConfigSettings implements Named {
 
 	private final Project project;
 	private final LoomGradleExtension extension;
-	public final Map<String, String> envVariables = new HashMap<>();
-	private List<Runnable> evaluateLater = new ArrayList<>();
+	private final List<Runnable> evaluateLater = new ArrayList<>();
 	private boolean evaluated = false;
 
 	public RunConfigSettings(Project project, String baseName) {
@@ -113,6 +122,11 @@ public final class RunConfigSettings implements Named {
 		this.project = project;
 		this.extension = LoomGradleExtension.get(project);
 		this.ideConfigGenerated = extension.isRootProject();
+		this.mainClass = project.getObjects().property(String.class).convention(project.provider(() -> {
+			Objects.requireNonNull(environment, "Run config " + baseName + " must specify environment");
+			Objects.requireNonNull(defaultMainClass, "Run config " + baseName + " must specify default main class");
+			return RunConfig.getMainClass(environment, extension, defaultMainClass);
+		}));
 
 		setSource(p -> {
 			final String sourceSetName = MinecraftSourceSets.get(p).getSourceSetForEnv(getEnvironment());
@@ -188,6 +202,16 @@ public final class RunConfigSettings implements Named {
 
 	public void setDefaultMainClass(String defaultMainClass) {
 		this.defaultMainClass = defaultMainClass;
+	}
+
+	/**
+	 * The main class of the run configuration.
+	 *
+	 * <p>If unset, {@link #getDefaultMainClass defaultMainClass} is used as the fallback,
+	 * including the overwritten main class from installer files.
+	 */
+	public Property<String> getMainClass() {
+		return mainClass;
 	}
 
 	public String getRunDir() {
@@ -286,7 +310,7 @@ public final class RunConfigSettings implements Named {
 	 * Add the {@code -XstartOnFirstThread} JVM argument when on OSX.
 	 */
 	public void startFirstThread() {
-		if (OperatingSystem.CURRENT_OS.equals(OperatingSystem.MAC_OS)) {
+		if (Platform.CURRENT.getOperatingSystem().isMacOS()) {
 			vmArg("-XstartOnFirstThread");
 		}
 	}
@@ -326,15 +350,14 @@ public final class RunConfigSettings implements Named {
 	}
 
 	/**
-	 * Configure run config with the default server options.
+	 * Configure run config with the default data options.
+	 *
+	 * <p>This method can only be used on Forge.
 	 */
 	public void data() {
+		ModPlatform.assertPlatform(getExtension(), ModPlatform.FORGE, () -> "RunConfigSettings.data() is only usable on Forge.");
 		environment("data");
-		defaultMainClass(Constants.Knot.KNOT_SERVER);
-
-		if (getExtension().isForge()) {
-			forgeTemplate("data");
-		}
+		forgeTemplate("data");
 	}
 
 	/**

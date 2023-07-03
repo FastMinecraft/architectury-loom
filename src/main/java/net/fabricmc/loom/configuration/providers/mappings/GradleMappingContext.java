@@ -31,6 +31,7 @@ import java.util.function.Supplier;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
+import org.gradle.api.artifacts.MinimalExternalModuleDependency;
 import org.gradle.api.artifacts.ResolutionStrategy;
 import org.gradle.api.logging.Logger;
 
@@ -38,6 +39,7 @@ import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingContext;
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider;
 import net.fabricmc.loom.util.download.DownloadBuilder;
+import net.fabricmc.loom.util.service.ScopedSharedServiceManager;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
 public class GradleMappingContext implements MappingContext {
@@ -65,8 +67,17 @@ public class GradleMappingContext implements MappingContext {
 	}
 
 	@Override
+	public Path resolveDependency(MinimalExternalModuleDependency dependency) {
+		return resolveDependency(project.getDependencies().create(dependency));
+	}
+
+	@Override
 	public Supplier<MemoryMappingTree> intermediaryTree() {
-		return () -> IntermediateMappingsService.getInstance(project, minecraftProvider()).getMemoryMappingTree();
+		return () -> {
+			try (var serviceManager = new ScopedSharedServiceManager()) {
+				return IntermediateMappingsService.getInstance(serviceManager, project, minecraftProvider()).getMemoryMappingTree();
+			}
+		};
 	}
 
 	@Override

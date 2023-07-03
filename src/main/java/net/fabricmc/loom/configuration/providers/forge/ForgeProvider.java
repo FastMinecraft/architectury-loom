@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2020-2021 FabricMC
+ * Copyright (c) 2020-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,9 +25,11 @@
 package net.fabricmc.loom.configuration.providers.forge;
 
 import java.io.File;
+import java.nio.file.Path;
 
 import org.gradle.api.Project;
 
+import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.configuration.DependencyInfo;
 import net.fabricmc.loom.util.Constants;
 
@@ -72,6 +74,18 @@ public class ForgeProvider extends DependencyProvider {
 	@Override
 	public String getTargetConfig() {
 		return Constants.Configurations.FORGE;
+	}
+
+	/**
+	 * {@return the Forge cache directory}.
+	 *
+	 * @param project the project
+	 */
+	public static Path getForgeCache(Project project) {
+		final LoomGradleExtension extension = LoomGradleExtension.get(project);
+		final String version = extension.getForgeProvider().getVersion().getCombined();
+		return LoomGradleExtension.get(project).getMinecraftProvider()
+				.dir("forge/" + version).toPath();
 	}
 
 	public static final class ForgeVersion {

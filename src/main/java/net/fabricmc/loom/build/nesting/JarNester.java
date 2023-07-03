@@ -42,9 +42,9 @@ import org.slf4j.Logger;
 import net.fabricmc.loom.LoomGradlePlugin;
 import net.fabricmc.loom.build.nesting.IncludedJarFactory.NestedFile;
 import net.fabricmc.loom.util.ModPlatform;
-import net.fabricmc.loom.util.ModUtils;
 import net.fabricmc.loom.util.Pair;
 import net.fabricmc.loom.util.ZipUtils;
+import net.fabricmc.loom.util.fmj.FabricModJsonFactory;
 
 public class JarNester {
 	public static void nestJars(Collection<File> jars, List<NestedFile> forgeJars, File modJar, ModPlatform platform, Logger logger) {
@@ -53,7 +53,7 @@ public class JarNester {
 			return;
 		}
 
-		Preconditions.checkArgument(ModUtils.isMod(modJar, platform), "Cannot nest jars into none mod jar " + modJar.getName());
+		Preconditions.checkArgument(FabricModJsonFactory.isModJar(modJar, platform), "Cannot nest jars into none mod jar " + modJar.getName());
 
 		try {
 			ZipUtils.add(modJar.toPath(), jars.stream().map(file -> {
@@ -78,7 +78,7 @@ public class JarNester {
 
 				for (File file : jars) {
 					String nestedJarPath = "META-INF/jars/" + file.getName();
-					Preconditions.checkArgument(ModUtils.isMod(file, platform), "Cannot nest none mod jar: " + file.getName());
+					Preconditions.checkArgument(FabricModJsonFactory.isModJar(file, platform), "Cannot nest none mod jar: " + file.getName());
 
 					for (JsonElement nestedJar : nestedJars) {
 						JsonObject jsonObject = nestedJar.getAsJsonObject();
@@ -115,7 +115,7 @@ public class JarNester {
 
 				for (File file : jars) {
 					String nestedJarPath = "META-INF/jars/" + file.getName();
-					Preconditions.checkArgument(ModUtils.isMod(file, platform), "Cannot nest none mod jar: " + file.getName());
+					Preconditions.checkArgument(FabricModJsonFactory.isModJar(file, platform), "Cannot nest none mod jar: " + file.getName());
 
 					for (JsonElement nestedJar : nestedJars) {
 						String nestedJarString = nestedJar.getAsString();

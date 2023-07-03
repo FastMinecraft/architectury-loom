@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -105,25 +105,42 @@ public interface ForgeExtensionAPI {
 	Property<Boolean> getUseCustomMixin();
 
 	/**
+	 * If true, Loom will use Forge's Log4J config file instead of its own.
+	 * This is disabled by default.
+	 *
+	 * @return the property
+	 */
+	Property<Boolean> getUseForgeLoggerConfig();
+
+	/**
 	 * A list of mod IDs for mods applied for data generation.
 	 * The returned list is unmodifiable but not immutable - it will reflect changes done with
 	 * {@link #dataGen(Action)}.
 	 *
 	 * @return the list
+	 * @deprecated Removed in favor of configuring the data generator directly.
 	 */
+	@ApiStatus.ScheduledForRemoval(inVersion = "2.0")
+	@Deprecated(forRemoval = true)
 	List<String> getDataGenMods();
 
 	/**
 	 * Applies data generation settings.
 	 *
 	 * @param action the action to configure data generation
+	 * @deprecated Removed in favor of configuring the data generator directly.
 	 */
+	@ApiStatus.ScheduledForRemoval(inVersion = "2.0")
+	@Deprecated(forRemoval = true)
 	void dataGen(Action<DataGenConsumer> action);
 
 	/**
 	 * Data generation config.
+	 * @deprecated Removed in favor of configuring the data generator directly.
 	 */
 	@ApiStatus.NonExtendable
+	@ApiStatus.ScheduledForRemoval(inVersion = "2.0")
+	@Deprecated(forRemoval = true)
 	interface DataGenConsumer {
 		/**
 		 * Adds mod IDs applied for data generation.

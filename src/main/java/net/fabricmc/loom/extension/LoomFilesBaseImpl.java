@@ -97,4 +97,19 @@ public abstract class LoomFilesBaseImpl implements LoomFiles {
 	public File getRemapClasspathFile() {
 		return new File(getProjectPersistentCache(), "remapClasspath.txt");
 	}
+
+	@Override
+	public File getGlobalMinecraftRepo() {
+		return new File(getUserCache(), "minecraftMaven");
+	}
+
+	@Override
+	public File getLocalMinecraftRepo() {
+		return new File(getRootProjectPersistentCache(), "minecraftMaven");
+	}
+
+	@Override
+	public File getForgeDependencyRepo() {
+		return new File(getUserCache(), "forge/transformed-dependencies-v1");
+	}
 }

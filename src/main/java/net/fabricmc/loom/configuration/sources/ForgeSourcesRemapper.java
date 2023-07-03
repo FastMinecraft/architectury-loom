@@ -48,6 +48,7 @@ import org.gradle.api.Project;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
+import net.fabricmc.loom.configuration.providers.mappings.TinyMappingsService;
 import net.fabricmc.loom.task.GenerateSourcesTask;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.DeletingFileVisitor;
@@ -58,6 +59,8 @@ import net.fabricmc.loom.util.SourceRemapper;
 import net.fabricmc.loom.util.ThreadingUtils;
 import net.fabricmc.loom.util.TinyRemapperHelper;
 import net.fabricmc.loom.util.ZipUtils;
+import net.fabricmc.loom.util.service.ScopedSharedServiceManager;
+import net.fabricmc.loom.util.service.SharedServiceManager;
 import net.fabricmc.lorenztiny.TinyMappingsReader;
 
 public class ForgeSourcesRemapper {
@@ -78,15 +81,17 @@ public class ForgeSourcesRemapper {
 		Path sourcesJar = GenerateSourcesTask.getMappedJarFileWithSuffix(minecraftJar.toFile(), "-sources.jar").toPath();
 
 		if (!Files.exists(sourcesJar)) {
-			addForgeSources(project, sourcesJar);
+			try (var serviceManager = new ScopedSharedServiceManager()) {
+				addForgeSources(project, serviceManager, sourcesJar);
+			}
 		}
 	}
 
-	public static void addForgeSources(Project project, Path sourcesJar) throws IOException {
+	public static void addForgeSources(Project project, SharedServiceManager serviceManager, Path sourcesJar) throws IOException {
 		try (FileSystemUtil.Delegate delegate = FileSystemUtil.getJarFileSystem(sourcesJar, true)) {
 			ThreadingUtils.TaskCompleter taskCompleter = ThreadingUtils.taskCompleter();
 
-			provideForgeSources(project, (path, bytes) -> {
+			provideForgeSources(project, serviceManager, (path, bytes) -> {
 				Path fsPath = delegate.get().getPath(path);
 
 				if (fsPath.getParent() != null) {
@@ -106,7 +111,7 @@ public class ForgeSourcesRemapper {
 		}
 	}
 
-	public static void provideForgeSources(Project project, BiConsumer<String, byte[]> consumer) throws IOException {
+	public static void provideForgeSources(Project project, SharedServiceManager serviceManager, BiConsumer<String, byte[]> consumer) throws IOException {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
 		String sourceDependency = extension.getForgeUserdevProvider().getJson().getAsJsonPrimitive("sources").getAsString();
 		List<Path> forgeInstallerSources = new ArrayList<>();
@@ -118,11 +123,11 @@ public class ForgeSourcesRemapper {
 		project.getLogger().lifecycle(":found {} forge source jars", forgeInstallerSources.size());
 		Map<String, byte[]> forgeSources = extractSources(forgeInstallerSources);
 		project.getLogger().lifecycle(":extracted {} forge source classes", forgeSources.size());
-		remapSources(project, forgeSources);
+		remapSources(project, serviceManager, forgeSources);
 		forgeSources.forEach(consumer);
 	}
 
-	private static void remapSources(Project project, Map<String, byte[]> sources) throws IOException {
+	private static void remapSources(Project project, SharedServiceManager serviceManager, Map<String, byte[]> sources) throws IOException {
 		File tmpInput = File.createTempFile("tmpInputForgeSources", null);
 		tmpInput.delete();
 		tmpInput.deleteOnExit();
@@ -156,7 +161,7 @@ public class ForgeSourcesRemapper {
 			System.setErr(new PrintStream(NullOutputStream.NULL_OUTPUT_STREAM));
 		}
 
-		remapForgeSourcesInner(project, tmpInput.toPath(), tmpOutput.toPath());
+		remapForgeSourcesInner(project, serviceManager, tmpInput.toPath(), tmpOutput.toPath());
 
 		if (!ForgeToolExecutor.shouldShowVerboseStderr(project)) {
 			System.setOut(out);
@@ -193,11 +198,12 @@ public class ForgeSourcesRemapper {
 		}
 	}
 
-	private static void remapForgeSourcesInner(Project project, Path tmpInput, Path tmpOutput) throws IOException {
+	private static void remapForgeSourcesInner(Project project, SharedServiceManager serviceManager, Path tmpInput, Path tmpOutput) throws IOException {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
 		Mercury mercury = SourceRemapper.createMercuryWithClassPath(project, false);
 
-		MappingSet mappings = new TinyMappingsReader(extension.getMappingsProvider().getMappingsWithSrg(), "srg", "named").read();
+		TinyMappingsService mappingsService = extension.getMappingConfiguration().getMappingsService(serviceManager, true);
+		MappingSet mappings = new TinyMappingsReader(mappingsService.getMappingTree(), "srg", "named").read();
 
 		for (Map.Entry<String, String> entry : TinyRemapperHelper.JSR_TO_JETBRAINS.entrySet()) {
 			mappings.getOrCreateClassMapping(entry.getKey()).setDeobfuscatedName(entry.getValue());
