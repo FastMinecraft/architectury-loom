@@ -94,7 +94,7 @@ dependencies {
 
 	// decompilers
 	implementation('net.fabricmc:fabric-fernflower:2.0.0')
-	implementation('net.fabricmc:cfr:0.2-SNAPSHOT')
+	implementation('net.fabricmc:cfr:0.3-SNAPSHOT')
 	implementation('it.unimi.dsi:fastutil:8.5.11')
 
 	// source code remapping
