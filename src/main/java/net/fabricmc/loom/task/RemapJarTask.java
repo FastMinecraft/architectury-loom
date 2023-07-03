@@ -148,7 +148,12 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		serviceManagerProvider = BuildSharedServiceManager.createForTask(this, getBuildEventsListenerRegistry());
 		tinyRemapperService = Suppliers.memoize(() -> TinyRemapperService.getOrCreate(serviceManagerProvider.get().get(), this));
 
-		getClasspath().from(getProject().getConfigurations().getByName(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME));
+		getClasspath().from(getProject().provider(() -> MinecraftSourceSets.get(getProject()).getConfigurations().stream()
+					.map(MinecraftSourceSets.ConfigurationName::runtime)
+					.map(getProject().getConfigurations()::getByName)
+					.map(Configuration::copy)
+					.toList()
+		));
 		getClasspath().from(getProject().getConfigurations().getByName("modCompileClasspath"));
 
 		getAddNestedDependencies().convention(true).finalizeValueOnRead();
