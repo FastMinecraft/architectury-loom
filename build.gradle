@@ -6,13 +6,38 @@ plugins {
 	id 'eclipse'
 	id 'groovy'
 	id 'checkstyle'
-	id 'jacoco'
 	id 'codenarc'
-	id "org.jetbrains.kotlin.jvm" version "1.8.22" // Must match the version included with gradle.
-	id "com.diffplug.spotless" version "6.8.0"
-	id "org.gradle.test-retry" version "1.5.2"
+	alias(libs.plugins.kotlin) apply false // Delay this so we can perform magic 🪄 first.
+	alias(libs.plugins.spotless)
+	alias(libs.plugins.retry)
 	id "dev.fastmc.maven-repo" version "1.0.0"
 }
+
+/**
+ * Haha this is fun :) The Kotlin gradle plugin triggers deprecation warnings for custom configurations (https://youtrack.jetbrains.com/issue/KT-60879)
+ * We need to make DefaultConfiguration.isSpecialCaseOfChangingUsage think that our configurstion is a special case and not deprecated.
+ * We do this by setting DefaultConfiguration.roleAtCreation to LEGACY, thus isInLegacyRole will now return true.
+ *
+ * Yeah I know we can just ignore the deprecation warning, but doing so wouldn't alert us to issues when testing against pre-release Gradle versions. Also this is more fun :)
+ */
+def brokenConfigurations = [
+	"commonDecompilerRuntimeClasspath",
+	"fernflowerRuntimeClasspath",
+	"cfrRuntimeClasspath",
+	"vineflowerRuntimeClasspath"
+]
+
+configurations.configureEach {
+	if (brokenConfigurations.contains(it.name)) {
+		// For some reason Gradle stops us from using Groovy magic to do this, so lets do it the boring way.
+		def field = org.gradle.api.internal.artifacts.configurations.DefaultConfiguration.class.getDeclaredField("roleAtCreation")
+		field.setAccessible(true)
+		field.set(it, ConfigurationRoles.LEGACY)
+	}
+}
+
+// Ensure we apply the Kotlin plugin after, to allow for the above configuration to take place first
+apply plugin: libs.plugins.kotlin.get().pluginId
 
 java {
 	toolchain {
@@ -33,9 +58,15 @@ tasks.withType(KotlinCompile).configureEach {
 group = "dev.architectury"
 archivesBaseName = project.name
 
-version = '1.2-SNAPSHOT'
+version = '1.7-SNAPSHOT'
 
 logger.lifecycle(":building plugin v${version}")
+
+// We must build against the version of Kotlin Gradle ships with.
+def kotlinVersion = KotlinDslVersion.current().getKotlinVersion()
+if (libs.versions.kotlin.get() != kotlinVersion) {
+	throw new IllegalStateException("Requires Kotlin version: ${kotlinVersion}")
+}
 
 repositories {
 	mavenCentral()
@@ -59,81 +90,129 @@ configurations {
 	testRuntimeClasspath.extendsFrom bootstrap
 }
 
+configurations.configureEach {
+	resolutionStrategy {
+		// I am sorry, for now
+		// failOnNonReproducibleResolution()
+	}
+
+	if (canBeConsumed)  {
+		attributes {
+			attribute(GradlePluginApiVersion.GRADLE_PLUGIN_API_VERSION_ATTRIBUTE, objects.named(GradlePluginApiVersion, GradleVersion.current().getVersion()))
+		}
+	}
+}
+
+sourceSets {
+	commonDecompiler {
+		java {
+			srcDir("src/decompilers/common")
+		}
+	}
+	fernflower {
+		java {
+			srcDir("src/decompilers/fernflower")
+		}
+	}
+	cfr {
+		java {
+			srcDir("src/decompilers/cfr")
+		}
+	}
+	vineflower {
+		java {
+			srcDir("src/decompilers/vineflower")
+		}
+	}
+}
+
 dependencies {
 	implementation gradleApi()
 
 	bootstrap project(":bootstrap")
 
 	// libraries
-	implementation('commons-io:commons-io:2.11.0')
-	implementation('com.google.code.gson:gson:2.10.1')
-	implementation('com.fasterxml.jackson.core:jackson-databind:2.14.0')
-	implementation('com.google.guava:guava:31.1-jre')
-	implementation('org.ow2.asm:asm:9.5')
-	implementation('org.ow2.asm:asm-analysis:9.5')
-	implementation('org.ow2.asm:asm-commons:9.5')
-	implementation('org.ow2.asm:asm-tree:9.5')
-	implementation('org.ow2.asm:asm-util:9.5')
-	implementation('me.tongfei:progressbar:0.9.0')
+	implementation libs.commons.io
+	implementation libs.gson
+	implementation libs.guava
+	implementation libs.bundles.asm
 
 	// game handling utils
-	implementation('net.fabricmc:stitch:0.6.2') {
+	implementation (libs.fabric.stitch) {
 		exclude module: 'mercury'
 		exclude module: 'enigma'
 	}
 
 	// tinyfile management
-	implementation('dev.architectury:tiny-remapper:1.8.20')
-	implementation 'net.fabricmc:access-widener:2.1.0'
-	implementation 'net.fabricmc:mapping-io:0.2.1'
-
-	implementation('net.fabricmc:lorenz-tiny:4.0.2') {
+	implementation libs.fabric.tiny.remapper
+	implementation libs.fabric.access.widener
+	implementation libs.fabric.mapping.io
+	implementation (libs.fabric.lorenz.tiny) {
 		transitive = false
 	}
-	implementation("dev.architectury:refmap-remapper:1.0.5")
+	implementation "dev.architectury:refmap-remapper:1.0.5"
+
+	implementation libs.fabric.loom.nativelib
 
 	// decompilers
-	implementation('net.fabricmc:fabric-fernflower:2.0.0')
-	implementation('net.fabricmc:cfr:0.3-SNAPSHOT')
-	implementation('it.unimi.dsi:fastutil:8.5.11')
+	fernflowerCompileOnly runtimeLibs.fernflower
+	fernflowerCompileOnly libs.fabric.mapping.io
+
+	cfrCompileOnly runtimeLibs.cfr
+	cfrCompileOnly libs.fabric.mapping.io
+
+	vineflowerCompileOnly runtimeLibs.vineflower
+	vineflowerCompileOnly libs.fabric.mapping.io
+
+	fernflowerApi sourceSets.commonDecompiler.output
+	cfrApi sourceSets.commonDecompiler.output
+	vineflowerApi sourceSets.commonDecompiler.output
+
+	implementation sourceSets.commonDecompiler.output
+	implementation sourceSets.fernflower.output
+	implementation sourceSets.cfr.output
+	implementation sourceSets.vineflower.output
 
 	// source code remapping
-	implementation('dev.architectury:mercury:0.1.2.15')
+	implementation libs.fabric.mercury
 
 	// Kotlin
-	implementation('org.jetbrains.kotlinx:kotlinx-metadata-jvm:0.6.0') {
+	implementation(libs.kotlin.metadata) {
 		transitive = false
 	}
 
 	// Kapt integration
-	compileOnly('org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.22') // Must match the version included with gradle.
+	compileOnly libs.kotlin.gradle.plugin
 
 	// Forge patches
-	implementation('net.minecraftforge:installertools:1.2.0')
-	implementation('org.cadixdev:lorenz:0.5.8')
-	implementation('org.cadixdev:lorenz-asm:0.5.8')
-	implementation('de.oceanlabs.mcp:mcinjector:3.8.0')
-	implementation('com.opencsv:opencsv:5.7.1')
-	implementation('net.minecraftforge:DiffPatch:2.0.7')
+	implementation libs.forge.installer.tools
+	implementation libs.lorenz
+	implementation libs.mcinjector
+	implementation libs.opencsv
+	implementation libs.forge.diffpatch
+	implementation libs.datafixerupper
+	implementation libs.at
 
 	// Forge mods.toml parsing
-	implementation ('com.electronwill.night-config:toml:3.6.6')
+	implementation libs.night.config.toml
 
 	// Testing
 	testImplementation(gradleTestKit())
-	testImplementation('org.spockframework:spock-core:2.3-groovy-3.0') {
+	testImplementation(testLibs.spock) {
 		exclude module: 'groovy-all'
 	}
-	testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
-	testImplementation('io.javalin:javalin:5.4.2') {
+	testImplementation testLibs.junit.jupiter.engine
+	testRuntimeOnly testLibs.junit.platform.launcher
+	testImplementation (testLibs.javalin) {
 		exclude group: 'org.jetbrains.kotlin'
 	}
-	testImplementation 'org.mockito:mockito-core:5.2.0'
+	testImplementation testLibs.mockito
+	testImplementation testLibs.java.debug
 
-	compileOnly 'org.jetbrains:annotations:24.0.1'
-	testCompileOnly 'org.jetbrains:annotations:24.0.1'
+	compileOnly runtimeLibs.jetbrains.annotations
+	testCompileOnly runtimeLibs.jetbrains.annotations
 
-	testCompileOnly('net.fabricmc:sponge-mixin:0.11.4+mixin.0.8.5') {
+	testCompileOnly (testLibs.mixin) {
 		transitive = false
 	}
 }
@@ -144,6 +223,10 @@ jar {
 	}
 
 	from configurations.bootstrap.collect { it.isDirectory() ? it : zipTree(it) }
+	from sourceSets.commonDecompiler.output.classesDirs
+	from sourceSets.cfr.output.classesDirs
+	from sourceSets.fernflower.output.classesDirs
+	from sourceSets.vineflower.output.classesDirs
 }
 
 java {
@@ -151,6 +234,8 @@ java {
 }
 
 spotless {
+	lineEndings = com.diffplug.spotless.LineEnding.UNIX
+
 	java {
 		licenseHeaderFile(rootProject.file("HEADER")).yearSeparator("-")
 		targetExclude("**/loom/util/DownloadUtil.java", "**/loom/util/FileSystemUtil.java")
@@ -167,8 +252,11 @@ spotless {
 		target 'src/**/*.gradle', '*.gradle'
 		greclipse()
 
-		// This file uses a @MAPPINGS@ token which is not valid Groovy
-		targetExclude('**/projects/forge/simple/build.gradle')
+		targetExclude(
+				// These files use a @MAPPINGS@ token which is not valid Groovy
+				'**/projects/forge/simple/build.gradle',
+				'**/projects/neoforge/simple/build.gradle'
+				)
 	}
 
 	kotlin {
@@ -199,6 +287,19 @@ test {
 	}
 }
 
+// Workaround https://github.com/gradle/gradle/issues/25898
+tasks.withType(Test).configureEach {
+	jvmArgs = [
+			'--add-opens=java.base/java.lang=ALL-UNNAMED',
+			'--add-opens=java.base/java.util=ALL-UNNAMED',
+			'--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
+			'--add-opens=java.base/java.net=ALL-UNNAMED'
+	]
+}
+
+
+import org.gradle.api.internal.artifacts.configurations.ConfigurationRoles
+import org.gradle.launcher.cli.KotlinDslVersion
 import org.gradle.util.GradleVersion
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.w3c.dom.Document
@@ -206,7 +307,7 @@ import org.w3c.dom.Element
 import org.w3c.dom.Node
 
 // Need to tweak this file to pretend we are compatible with j8 so the bootstrap will run.
-tasks.withType(GenerateModuleMetadata) {
+tasks.withType(GenerateModuleMetadata).configureEach {
 	doLast {
 		def file = outputFile.get().asFile
 
@@ -221,13 +322,18 @@ tasks.withType(GenerateModuleMetadata) {
 }
 
 // A task to output a json file with a list of all the test to run
-task writeActionsTestMatrix() {
+tasks.register('writeActionsTestMatrix') {
 	doLast {
 		def testMatrix = []
 		file('src/test/groovy/net/fabricmc/loom/test/integration').traverse {
 			if (it.name.endsWith("Test.groovy")) {
 				if (it.name.endsWith("ReproducibleBuildTest.groovy")) {
 					// This test gets a special case to run across all os's
+					return
+				}
+
+				if (it.name.endsWith("DebugLineNumbersTest.groovy")) {
+					// Known flakey test
 					return
 				}
 
@@ -263,7 +369,7 @@ tasks.named('wrapper') {
 /**
  * Run this task to download the gradle sources next to the api jar, you may need to manually attach the sources jar
  */
-task downloadGradleSources() {
+tasks.register('downloadGradleSources') {
 	doLast {
 		// Awful hack to find the gradle api location
 		def gradleApiFile = project.configurations.detachedConfiguration(dependencies.gradleApi()).files.stream()
@@ -285,13 +391,13 @@ tasks.withType(GenerateModuleMetadata) {
 	enabled = false
 }
 
-task printActionsTestName(type: PrintActionsTestName) {
+tasks.register('printActionsTestName', PrintActionsTestName) {
 }
 
 /**
  * Replaces invalid characters in test names for GitHub Actions artifacts.
  */
-class PrintActionsTestName extends DefaultTask {
+abstract class PrintActionsTestName extends DefaultTask {
 	@Input
 	@Option(option = "name", description = "The test name")
 	String testName
@@ -303,4 +409,4 @@ class PrintActionsTestName extends DefaultTask {
 	}
 }
 
-tasks.test.enabled = System.getProperty("run_test") == "true"
+apply from: rootProject.file('gradle/versions.gradle')

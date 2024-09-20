@@ -27,58 +27,49 @@ package net.fabricmc.loom.configuration.decompile;
 import java.io.File;
 
 import org.gradle.api.Action;
+import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.tasks.TaskProvider;
 
 import net.fabricmc.loom.api.decompilers.DecompilerOptions;
-import net.fabricmc.loom.configuration.ConfigContext;
+import net.fabricmc.loom.configuration.providers.minecraft.MinecraftJar;
 import net.fabricmc.loom.configuration.providers.minecraft.mapped.MappedMinecraftProvider;
 import net.fabricmc.loom.task.GenerateSourcesTask;
-import net.fabricmc.loom.task.UnpickJarTask;
 import net.fabricmc.loom.util.Constants;
+import net.fabricmc.loom.util.Strings;
 
 public final class SplitDecompileConfiguration extends DecompileConfiguration<MappedMinecraftProvider.Split> {
-	public SplitDecompileConfiguration(ConfigContext configContext, MappedMinecraftProvider.Split minecraftProvider) {
-		super(configContext, minecraftProvider);
+	public SplitDecompileConfiguration(Project project, MappedMinecraftProvider.Split minecraftProvider) {
+		super(project, minecraftProvider);
+	}
+
+	@Override
+	public String getTaskName(MinecraftJar.Type type) {
+		return "gen%sSources".formatted(Strings.capitalize(type.toString()));
 	}
 
 	@Override
 	public void afterEvaluation() {
-		File commonJarToDecompile = minecraftProvider.getCommonJar().toFile();
-		File clientOnlyJarToDecompile = minecraftProvider.getClientOnlyJar().toFile();
-
-		TaskProvider<UnpickJarTask> unpickCommonJar = null;
-		TaskProvider<UnpickJarTask> unpickClientOnlyJar = null;
-
-		if (mappingConfiguration.hasUnpickDefinitions()) {
-			commonJarToDecompile = new File(extension.getMappingConfiguration().mappingsWorkingDir().toFile(), "minecraft-common-unpicked.jar");
-			clientOnlyJarToDecompile = new File(extension.getMappingConfiguration().mappingsWorkingDir().toFile(), "minecraft-clientonly-unpicked.jar");
-
-			unpickCommonJar = createUnpickJarTask("unpickCommonJar", minecraftProvider.getCommonJar().toFile(), commonJarToDecompile);
-			unpickClientOnlyJar = createUnpickJarTask("unpickClientOnlyJar", minecraftProvider.getClientOnlyJar().toFile(), clientOnlyJarToDecompile);
-		}
-
-		// Need to re-declare them as final to access them from the lambada
-		final File commonJar = commonJarToDecompile;
-		final File clientOnlyJar = clientOnlyJarToDecompile;
-		final TaskProvider<UnpickJarTask> unpickCommonJarTask = unpickCommonJar;
-		final TaskProvider<UnpickJarTask> unpickClientOnlyJarTask = unpickClientOnlyJar;
+		final MinecraftJar commonJar = minecraftProvider.getCommonJar();
+		final MinecraftJar clientOnlyJar = minecraftProvider.getClientOnlyJar();
 
 		final TaskProvider<Task> commonDecompileTask = createDecompileTasks("Common", task -> {
-			task.getInputJar().set(commonJar);
-			task.getRuntimeJar().set(minecraftProvider.getCommonJar().toFile());
+			task.getInputJarName().set(commonJar.getName());
+			task.getOutputJar().fileValue(GenerateSourcesTask.getJarFileWithSuffix("-sources.jar", commonJar.getPath()));
 
-			if (unpickCommonJarTask != null) {
-				task.dependsOn(unpickCommonJarTask);
+			if (mappingConfiguration.hasUnpickDefinitions()) {
+				File unpickJar = new File(extension.getMappingConfiguration().mappingsWorkingDir().toFile(), "minecraft-common-unpicked.jar");
+				configureUnpick(task, unpickJar);
 			}
 		});
 
 		final TaskProvider<Task> clientOnlyDecompileTask = createDecompileTasks("ClientOnly", task -> {
-			task.getInputJar().set(clientOnlyJar);
-			task.getRuntimeJar().set(minecraftProvider.getClientOnlyJar().toFile());
+			task.getInputJarName().set(clientOnlyJar.getName());
+			task.getOutputJar().fileValue(GenerateSourcesTask.getJarFileWithSuffix("-sources.jar", clientOnlyJar.getPath()));
 
-			if (unpickCommonJarTask != null) {
-				task.dependsOn(unpickClientOnlyJarTask);
+			if (mappingConfiguration.hasUnpickDefinitions()) {
+				File unpickJar = new File(extension.getMappingConfiguration().mappingsWorkingDir().toFile(), "minecraft-clientonly-unpicked.jar");
+				configureUnpick(task, unpickJar);
 			}
 
 			// Don't allow them to run at the same time.
@@ -123,7 +114,7 @@ public final class SplitDecompileConfiguration extends DecompileConfiguration<Ma
 			task.setDescription("Decompile minecraft (%s) using the default decompiler.".formatted(name));
 			task.setGroup(Constants.TaskGroup.FABRIC);
 
-			task.dependsOn(project.getTasks().named("gen%sSourcesWithCfr".formatted(name)));
+			task.dependsOn(project.getTasks().named("gen%sSourcesWith%s".formatted(name, DecompileConfiguration.DEFAULT_DECOMPILER)));
 		});
 	}
 }

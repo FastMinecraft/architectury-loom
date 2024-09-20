@@ -51,18 +51,12 @@ class ReproducibleBuildTest extends Specification implements GradleProjectTestTr
 		then:
 		result.task(":build").outcome == SUCCESS
 		generateMD5(gradle.getOutputFile("fabric-example-mod-1.0.0.jar")) == modHash
-		generateMD5(gradle.getOutputFile("fabric-example-mod-1.0.0-sources.jar")) in sourceHash // Done for different line endings.
+		generateMD5(gradle.getOutputFile("fabric-example-mod-1.0.0-sources.jar")) == sourceHash
 
 		where:
 		version              | modHash                               | sourceHash
-		DEFAULT_GRADLE      | "ed3306ef60f434c55048cba8de5dab95"    | [
-			"0d9eec9248d93eb6ec4a1cd4d927e609",
-			"436bf54ef015576b0a338d55d9a0bb82"
-		]
-		PRE_RELEASE_GRADLE  | "ed3306ef60f434c55048cba8de5dab95"    | [
-			"0d9eec9248d93eb6ec4a1cd4d927e609",
-			"436bf54ef015576b0a338d55d9a0bb82"
-		]
+		DEFAULT_GRADLE       | "207bd75aa34fc996a97e962dd98b61d5"    | "8e8fac2a5e32fc872e6cf0f9ccc55cfd"
+		PRE_RELEASE_GRADLE   | "207bd75aa34fc996a97e962dd98b61d5"    | "8e8fac2a5e32fc872e6cf0f9ccc55cfd"
 	}
 
 	String generateMD5(File file) {

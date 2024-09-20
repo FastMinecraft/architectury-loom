@@ -28,6 +28,7 @@ import java.nio.file.Path
 import java.util.function.Supplier
 import java.util.zip.ZipFile
 
+import groovy.transform.EqualsAndHashCode
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.MinimalExternalModuleDependency
 import org.gradle.api.logging.Logger
@@ -41,13 +42,16 @@ import net.fabricmc.loom.configuration.providers.mappings.IntermediateMappingsSe
 import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingSpec
 import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingsProcessor
 import net.fabricmc.loom.configuration.providers.mappings.extras.unpick.UnpickLayer
+import net.fabricmc.loom.configuration.providers.mappings.intermediary.IntermediaryMappingLayer
+import net.fabricmc.loom.configuration.providers.mappings.utils.AddConstructorMappingVisitor
 import net.fabricmc.loom.configuration.providers.minecraft.MinecraftProvider
 import net.fabricmc.loom.test.unit.LoomMocks
 import net.fabricmc.loom.util.download.Download
 import net.fabricmc.loom.util.download.DownloadBuilder
+import net.fabricmc.mappingio.MappingReader
 import net.fabricmc.mappingio.adapter.MappingDstNsReorder
 import net.fabricmc.mappingio.adapter.MappingSourceNsSwitch
-import net.fabricmc.mappingio.format.Tiny2Writer
+import net.fabricmc.mappingio.format.tiny.Tiny2FileWriter
 import net.fabricmc.mappingio.tree.MemoryMappingTree
 
 abstract class LayeredMappingsSpecification extends Specification implements LayeredMappingsTestConstants {
@@ -88,20 +92,24 @@ abstract class LayeredMappingsSpecification extends Specification implements Lay
 	}
 
 	MemoryMappingTree getLayeredMappings(MappingsSpec<? extends MappingLayer>... specs) {
-		LayeredMappingSpec spec = new LayeredMappingSpec(specs.toList())
-		LayeredMappingsProcessor processor = new LayeredMappingsProcessor(spec)
+		LayeredMappingsProcessor processor = createLayeredMappingsProcessor(specs)
 		return processor.getMappings(processor.resolveLayers(mappingContext))
 	}
 
 	UnpickLayer.UnpickData getUnpickData(MappingsSpec<? extends MappingLayer>... specs) {
-		LayeredMappingSpec spec = new LayeredMappingSpec(specs.toList())
-		LayeredMappingsProcessor processor = new LayeredMappingsProcessor(spec)
+		LayeredMappingsProcessor processor = createLayeredMappingsProcessor(specs)
 		return processor.getUnpickData(processor.resolveLayers(mappingContext))
+	}
+
+	private static LayeredMappingsProcessor createLayeredMappingsProcessor(MappingsSpec<? extends MappingLayer>... specs) {
+		boolean usingNoIntermediateSpec = specs.any { it instanceof NoIntermediateMappingsSpec }
+		LayeredMappingSpec spec = new LayeredMappingSpec(specs.toList())
+		return new LayeredMappingsProcessor(spec, usingNoIntermediateSpec)
 	}
 
 	String getTiny(MemoryMappingTree mappingTree) {
 		def sw = new StringWriter()
-		mappingTree.accept(new Tiny2Writer(sw, false))
+		mappingTree.accept(new Tiny2FileWriter(sw, false))
 		return sw.toString()
 	}
 
@@ -109,7 +117,8 @@ abstract class LayeredMappingsSpecification extends Specification implements Lay
 		def reorderedMappings = new MemoryMappingTree()
 		def nsReorder = new MappingDstNsReorder(reorderedMappings, Collections.singletonList(MappingsNamespace.NAMED.toString()))
 		def nsSwitch = new MappingSourceNsSwitch(nsReorder, MappingsNamespace.INTERMEDIARY.toString(), true)
-		mappingTree.accept(nsSwitch)
+		def addConstructor = new AddConstructorMappingVisitor(nsSwitch)
+		mappingTree.accept(addConstructor)
 		return reorderedMappings
 	}
 
@@ -139,7 +148,7 @@ abstract class LayeredMappingsSpecification extends Specification implements Lay
 		@Override
 		Supplier<MemoryMappingTree> intermediaryTree() {
 			return {
-				IntermediateMappingsService.create(LoomMocks.intermediaryMappingsProviderMock("test", intermediaryUrl), minecraftProvider()).memoryMappingTree
+				IntermediateMappingsService.create(LoomMocks.intermediaryMappingsProviderMock("test", intermediaryUrl), minecraftProvider(), null).memoryMappingTree
 			}
 		}
 
@@ -166,6 +175,22 @@ abstract class LayeredMappingsSpecification extends Specification implements Lay
 		@Override
 		boolean refreshDeps() {
 			return false
+		}
+	}
+
+	@EqualsAndHashCode
+	static class NoIntermediateMappingsSpec implements MappingsSpec<IntermediaryMappingLayer> {
+		static String NO_OP_MAPPINGS = "tiny\t2\t0\tofficial\tintermediary"
+
+		@Override
+		IntermediaryMappingLayer createLayer(MappingContext context) {
+			return new IntermediaryMappingLayer(NoIntermediateMappingsSpec.&createNoOpMappings)
+		}
+
+		private static MemoryMappingTree createNoOpMappings() {
+			def tree = new MemoryMappingTree()
+			MappingReader.read(new StringReader(NO_OP_MAPPINGS), tree)
+			return tree
 		}
 	}
 }

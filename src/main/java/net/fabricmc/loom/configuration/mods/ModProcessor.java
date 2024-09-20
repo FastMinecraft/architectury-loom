@@ -32,19 +32,19 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.Manifest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.google.common.base.Stopwatch;
 import com.google.gson.JsonObject;
-import dev.architectury.tinyremapper.InputTag;
-import dev.architectury.tinyremapper.NonClassCopyMode;
-import dev.architectury.tinyremapper.OutputConsumerPath;
-import dev.architectury.tinyremapper.TinyRemapper;
+import dev.architectury.loom.neoforge.NeoForgeModDependencies;
+import dev.architectury.loom.util.MappingOption;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.attributes.Usage;
@@ -55,7 +55,7 @@ import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.build.IntermediaryNamespaces;
 import net.fabricmc.loom.configuration.mods.dependency.ModDependency;
 import net.fabricmc.loom.configuration.providers.mappings.MappingConfiguration;
-import net.fabricmc.loom.task.RemapJarTask;
+import net.fabricmc.loom.extension.RemapperExtensionHolder;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.LoggerFilter;
 import net.fabricmc.loom.util.ModPlatform;
@@ -65,9 +65,14 @@ import net.fabricmc.loom.util.ZipUtils;
 import net.fabricmc.loom.util.kotlin.KotlinClasspathService;
 import net.fabricmc.loom.util.kotlin.KotlinRemapperClassloader;
 import net.fabricmc.loom.util.service.SharedServiceManager;
-import net.fabricmc.loom.util.srg.AtRemapper;
+import net.fabricmc.loom.util.srg.AtClassRemapper;
 import net.fabricmc.loom.util.srg.CoreModClassRemapper;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
+import net.fabricmc.tinyremapper.InputTag;
+import net.fabricmc.tinyremapper.NonClassCopyMode;
+import net.fabricmc.tinyremapper.OutputConsumerPath;
+import net.fabricmc.tinyremapper.TinyRemapper;
+import net.fabricmc.tinyremapper.extension.mixin.MixinExtension;
 
 public class ModProcessor {
 	private static final String toM = MappingsNamespace.NAMED.toString();
@@ -121,6 +126,12 @@ public class ModProcessor {
 	}
 
 	private void stripNestedJars(Path path) {
+		try {
+			ZipUtils.deleteIfExists(path, "META-INF/jarjar/metadata.json");
+		} catch (IOException e) {
+			throw new UncheckedIOException("Failed to strip nested jars from %s".formatted(path), e);
+		}
+
 		if (!ZipUtils.contains(path, "fabric.mod.json")) {
 			if (ZipUtils.contains(path, "quilt.mod.json")) {
 				// Strip out all contained jar info as we dont want loader to try and load the jars contained in dev.
@@ -154,20 +165,23 @@ public class ModProcessor {
 	private void remapJars(List<ModDependency> remapList) throws IOException {
 		final LoomGradleExtension extension = LoomGradleExtension.get(project);
 		final MappingConfiguration mappingConfiguration = extension.getMappingConfiguration();
-		String fromM = IntermediaryNamespaces.intermediary(project);
-		Path[] mcDeps = project.getConfigurations().getByName(Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES).getFiles()
-				.stream().map(File::toPath).toArray(Path[]::new);
-
+		String fromM = IntermediaryNamespaces.runtimeIntermediary(project);
 		Stopwatch stopwatch = Stopwatch.createStarted();
+		Set<String> knownIndyBsms = new HashSet<>(extension.getKnownIndyBsms().get());
 
-		boolean srg = (fromM.equals("srg") || toM.equals("srg")) && extension.isForge();
-		MemoryMappingTree mappings = mappingConfiguration.getMappingsService(serviceManager, srg).getMappingTree();
+		for (ModDependency modDependency : remapList) {
+			knownIndyBsms.addAll(modDependency.getMetadata().knownIdyBsms());
+		}
+
+		MappingOption mappingOption = MappingOption.forPlatform(extension);
+		MemoryMappingTree mappings = mappingConfiguration.getMappingsService(serviceManager, mappingOption).getMappingTree();
 		LoggerFilter.replaceSystemOut();
+
 		TinyRemapper.Builder builder = TinyRemapper.newRemapper()
-				.logger(project.getLogger()::lifecycle)
-				.logUnknownInvokeDynamic(false)
+				.withKnownIndyBsm(knownIndyBsms)
 				.withMappings(TinyRemapperHelper.create(mappings, fromM, toM, false))
-				.renameInvalidLocals(false);
+				.renameInvalidLocals(false)
+				.extraAnalyzeVisitor(AccessWidenerAnalyzeVisitorProvider.createFromMods(fromM, remapList, extension.getPlatform().get()));
 
 		final KotlinClasspathService kotlinClasspathService = KotlinClasspathService.getOrCreateIfRequired(serviceManager, project);
 		KotlinRemapperClassloader kotlinRemapperClassloader = null;
@@ -177,13 +191,22 @@ public class ModProcessor {
 			builder.extension(kotlinRemapperClassloader.getTinyRemapperExtension());
 		}
 
-		final TinyRemapper remapper = builder.build();
+		final Set<InputTag> remapMixins = new HashSet<>();
+		final boolean requiresStaticMixinRemap = remapList.stream()
+				.anyMatch(modDependency -> modDependency.getMetadata().mixinRemapType() == ArtifactMetadata.MixinRemapType.STATIC);
 
-		for (Path minecraftJar : extension.getMinecraftJars(extension.isForge() ? MappingsNamespace.SRG : MappingsNamespace.INTERMEDIARY)) {
-			remapper.readClassPathAsync(minecraftJar);
+		if (requiresStaticMixinRemap) {
+			// Configure the mixin extension to remap mixins from mod jars that were remapped with the mixin extension.
+			builder.extension(new MixinExtension(remapMixins::contains));
 		}
 
-		remapper.readClassPathAsync(mcDeps);
+		for (RemapperExtensionHolder holder : extension.getRemapperExtensions().get()) {
+			holder.apply(builder, fromM, toM, project.getObjects());
+		}
+
+		final TinyRemapper remapper = builder.build();
+
+		remapper.readClassPath(extension.getMinecraftJars(IntermediaryNamespaces.runtimeIntermediaryNamespace(project)).toArray(Path[]::new));
 
 		final Map<ModDependency, InputTag> tagMap = new HashMap<>();
 		final Map<ModDependency, OutputConsumerPath> outputConsumerMap = new HashMap<>();
@@ -193,7 +216,6 @@ public class ModProcessor {
 			for (File inputFile : entry.getSourceConfiguration().get().getFiles()) {
 				if (remapList.stream().noneMatch(info -> info.getInputFile().toFile().equals(inputFile))) {
 					project.getLogger().debug("Adding " + inputFile + " onto the remap classpath");
-
 					remapper.readClassPathAsync(inputFile.toPath());
 				}
 			}
@@ -203,6 +225,18 @@ public class ModProcessor {
 			InputTag tag = remapper.createInputTag();
 
 			project.getLogger().debug("Adding " + info.getInputFile() + " as a remap input");
+
+			// Note: this is done at a jar level, not at the level of an individual mixin config.
+			// If a mod has multiple mixin configs, it's assumed that either all or none of them have refmaps.
+			if (info.getMetadata().mixinRemapType() == ArtifactMetadata.MixinRemapType.STATIC) {
+				if (!requiresStaticMixinRemap) {
+					// Should be impossible but stranger things have happened.
+					throw new IllegalStateException("Was not configured for static remap, but a mod required it?!");
+				}
+
+				project.getLogger().info("Remapping mixins in {} statically", info.getInputFile());
+				remapMixins.add(tag);
+			}
 
 			remapper.readInputsAsync(tag, info.getInputFile());
 			tagMap.put(info, tag);
@@ -256,9 +290,16 @@ public class ModProcessor {
 			stripNestedJars(output);
 			remapJarManifestEntries(output);
 
-			if (extension.isForge()) {
-				AtRemapper.remap(project.getLogger(), output, mappings);
-				CoreModClassRemapper.remapJar(output, mappings, project.getLogger());
+			if (extension.isForgeLike()) {
+				if (extension.isNeoForge()) {
+					// NeoForge: Fully map ATs
+					NeoForgeModDependencies.remapAts(output, mappings, fromM, toM);
+				} else {
+					// Forge: only map class names, the rest are mapped srg -> named at runtime
+					AtClassRemapper.remap(project, output, mappings);
+				}
+
+				CoreModClassRemapper.remapJar(project, extension.getPlatform().get(), output, mappings);
 			}
 
 			dependency.copyToCache(project, output, null);
@@ -270,10 +311,10 @@ public class ModProcessor {
 	}
 
 	private void remapJarManifestEntries(Path jar) throws IOException {
-		ZipUtils.transform(jar, Map.of(RemapJarTask.MANIFEST_PATH, bytes -> {
+		ZipUtils.transform(jar, Map.of(Constants.Manifest.PATH, bytes -> {
 			var manifest = new Manifest(new ByteArrayInputStream(bytes));
 
-			manifest.getMainAttributes().putValue(RemapJarTask.MANIFEST_NAMESPACE_KEY, toM);
+			manifest.getMainAttributes().putValue(Constants.Manifest.MAPPING_NAMESPACE, toM);
 
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
 			manifest.write(out);

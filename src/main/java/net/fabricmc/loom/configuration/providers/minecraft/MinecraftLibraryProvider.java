@@ -56,7 +56,7 @@ public class MinecraftLibraryProvider {
 	public MinecraftLibraryProvider(MinecraftProvider minecraftProvider, Project project) {
 		this.project = project;
 		this.minecraftProvider = minecraftProvider;
-		this.processorManager = new LibraryProcessorManager(platform, project.getRepositories(), getEnabledProcessors());
+		this.processorManager = new LibraryProcessorManager(platform, project.getRepositories(), LoomGradleExtension.get(project).getLibraryProcessors().get(), getEnabledProcessors());
 	}
 
 	private List<String> getEnabledProcessors() {
@@ -82,8 +82,8 @@ public class MinecraftLibraryProvider {
 		final LoomGradleExtension extension = LoomGradleExtension.get(project);
 		final MinecraftJarConfiguration jarConfiguration = extension.getMinecraftJarConfiguration().get();
 
-		final boolean provideClient = jarConfiguration.getSupportedEnvironments().contains("client");
-		final boolean provideServer = jarConfiguration.getSupportedEnvironments().contains("server");
+		final boolean provideClient = jarConfiguration.supportedEnvironments().contains("client");
+		final boolean provideServer = jarConfiguration.supportedEnvironments().contains("server");
 		assert provideClient || provideServer;
 
 		if (provideClient) {

@@ -37,18 +37,18 @@ public class LoomDependencyManager {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
 
 		SourceRemapper sourceRemapper = new SourceRemapper(project, serviceManager, true);
-		String platformSuffix = extension.isForge() ? "_forge" : extension.isQuilt() ? "_arch_quilt" : "";
+		String platformSuffix = extension.isForgeLike() ? "_forge" : extension.isQuilt() ? "_arch_quilt" : "";
 		String mappingsIdentifier = extension.getMappingConfiguration().mappingsIdentifier() + platformSuffix;
 
 		ModConfigurationRemapper.supplyModConfigurations(project, serviceManager, mappingsIdentifier, extension, sourceRemapper);
 
 		sourceRemapper.remapAll();
 
-		if (extension.getInstallerData() == null && !extension.isForge()) {
+		if (extension.getInstallerData() == null && !extension.isForgeLike()) {
 			if (extension.isQuilt()) {
-				project.getLogger().warn("quilt_installer.json not found in dependencies!");
+				project.getLogger().info("quilt_installer.json not found in dependencies!");
 			} else {
-				project.getLogger().warn("fabric-installer.json not found in dependencies!");
+				project.getLogger().info("fabric-installer.json not found in dependencies!");
 			}
 		}
 	}

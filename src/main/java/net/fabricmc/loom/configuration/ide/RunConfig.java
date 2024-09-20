@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 import com.google.common.collect.ImmutableMap;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import org.gradle.api.JavaVersion;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.ModuleVersionIdentifier;
 import org.gradle.api.artifacts.ResolvedArtifact;
@@ -59,6 +60,7 @@ import net.fabricmc.loom.configuration.InstallerData;
 import net.fabricmc.loom.configuration.ide.idea.IdeaSyncTask;
 import net.fabricmc.loom.configuration.ide.idea.IdeaUtils;
 import net.fabricmc.loom.configuration.providers.BundleMetadata;
+import net.fabricmc.loom.configuration.providers.minecraft.library.LibraryContext;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.gradle.SourceSetReference;
 
@@ -113,15 +115,6 @@ public class RunConfig {
 		return e;
 	}
 
-	private static void populate(Project project, LoomGradleExtension extension, RunConfig runConfig, String environment) {
-		runConfig.configName += extension.isRootProject() ? "" : " (" + project.getPath() + ")";
-		runConfig.eclipseProjectName = project.getExtensions().getByType(EclipseModel.class).getProject().getName();
-
-		runConfig.mainClass = "net.fabricmc.devlaunchinjector.Main";
-		runConfig.vmArgs.add("-Dfabric.dli.config=" + encodeEscaped(extension.getFiles().getDevLauncherConfig().getAbsolutePath()));
-		runConfig.vmArgs.add("-Dfabric.dli.env=" + environment.toLowerCase());
-	}
-
 	// Turns camelCase/PascalCase into Capital Case
 	// caseConversionExample -> Case Conversion Example
 	private static String capitalizeCamelCaseName(String name) {
@@ -135,6 +128,12 @@ public class RunConfig {
 	public static RunConfig runConfig(Project project, RunConfigSettings settings) {
 		settings.evaluateNow();
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
+		LibraryContext context = new LibraryContext(extension.getMinecraftProvider().getVersionInfo(), JavaVersion.current());
+
+		if (settings.getEnvironment().equals("client") && context.usesLWJGL3()) {
+			settings.startFirstThread();
+		}
+
 		String name = settings.getName();
 
 		String configName = settings.getConfigName();
@@ -170,9 +169,18 @@ public class RunConfig {
 			runDir = "run";
 		}
 
+		boolean appendProjectPath = settings.getAppendProjectPathToConfigName().get();
 		RunConfig runConfig = new RunConfig();
 		runConfig.configName = configName;
-		populate(project, extension, runConfig, environment);
+
+		if (appendProjectPath && !extension.isRootProject()) {
+			runConfig.configName += " (" + project.getPath() + ")";
+		}
+
+		runConfig.mainClass = settings.devLaunchMainClass().get();
+		runConfig.vmArgs.add("-Dfabric.dli.config=" + encodeEscaped(extension.getFiles().getDevLauncherConfig().getAbsolutePath()));
+		runConfig.vmArgs.add("-Dfabric.dli.env=" + environment.toLowerCase());
+		runConfig.eclipseProjectName = project.getExtensions().getByType(EclipseModel.class).getProject().getName();
 		runConfig.ideaModuleName = IdeaUtils.getIdeaModuleName(new SourceSetReference(sourceSet, project));
 		runConfig.runDirIdeaUrl = "file://$PROJECT_DIR$/" + runDir;
 		runConfig.runDir = runDir;

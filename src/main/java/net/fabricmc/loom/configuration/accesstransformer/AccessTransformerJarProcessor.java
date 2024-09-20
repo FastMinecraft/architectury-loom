@@ -40,9 +40,9 @@ import javax.inject.Inject;
 
 import com.google.common.hash.Hashing;
 import com.google.common.io.MoreFiles;
+import dev.architectury.at.AccessTransformSet;
+import dev.architectury.at.io.AccessTransformFormats;
 import dev.architectury.loom.util.TempFiles;
-import org.cadixdev.at.AccessTransformSet;
-import org.cadixdev.at.io.AccessTransformFormats;
 import org.gradle.api.Project;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.logging.Logger;
@@ -54,12 +54,14 @@ import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
 import net.fabricmc.loom.api.processor.MinecraftJarProcessor;
 import net.fabricmc.loom.api.processor.ProcessorContext;
 import net.fabricmc.loom.api.processor.SpecContext;
+import net.fabricmc.loom.build.IntermediaryNamespaces;
+import net.fabricmc.loom.configuration.providers.minecraft.MinecraftVersionMeta;
 import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.DependencyDownloader;
 import net.fabricmc.loom.util.ExceptionUtil;
 import net.fabricmc.loom.util.ForgeToolExecutor;
+import net.fabricmc.loom.util.LoomVersions;
 import net.fabricmc.loom.util.fmj.FabricModJson;
-import net.fabricmc.lorenztiny.TinyMappingsReader;
 
 public class AccessTransformerJarProcessor implements MinecraftJarProcessor<AccessTransformerJarProcessor.Spec> {
 	private static final Logger LOGGER = Logging.getLogger(AccessTransformerJarProcessor.class);
@@ -137,7 +139,7 @@ public class AccessTransformerJarProcessor implements MinecraftJarProcessor<Acce
 			}
 		}
 
-		accessTransformSet = accessTransformSet.remap(new TinyMappingsReader(context.getMappings(), MappingsNamespace.SRG.toString(), MappingsNamespace.NAMED.toString()).read());
+		accessTransformSet = accessTransformSet.remap(context.getMappings(), IntermediaryNamespaces.intermediary(project), MappingsNamespace.NAMED.toString());
 
 		final Path accessTransformerPath = tempFiles.file("accesstransformer-merged", ".cfg");
 
@@ -156,10 +158,13 @@ public class AccessTransformerJarProcessor implements MinecraftJarProcessor<Acce
 	}
 
 	public static void executeAt(Project project, Path input, Path output, AccessTransformerConfiguration configuration) throws IOException {
-		boolean serverBundleMetadataPresent = LoomGradleExtension.get(project).getMinecraftProvider().getServerBundleMetadata() != null;
+		LoomVersions accessTransformer = chooseAccessTransformer(project);
+		String mainClass = accessTransformer == LoomVersions.ACCESS_TRANSFORMERS_NEO ? "net.neoforged.accesstransformer.cli.TransformerProcessor"
+						: "net.minecraftforge.accesstransformer.TransformerProcessor";
 		FileCollection classpath = new DependencyDownloader(project)
-				.add(Constants.Dependencies.ACCESS_TRANSFORMERS + (serverBundleMetadataPresent ? Constants.Dependencies.Versions.ACCESS_TRANSFORMERS_NEW : Constants.Dependencies.Versions.ACCESS_TRANSFORMERS))
-				.add(Constants.Dependencies.ASM + Constants.Dependencies.Versions.ASM)
+				.add(accessTransformer.mavenNotation())
+				.add(LoomVersions.ASM.mavenNotation())
+				.platform(LoomVersions.ACCESS_TRANSFORMERS_LOG4J_BOM.mavenNotation())
 				.download();
 		List<String> args = new ArrayList<>();
 		args.add("--inJar");
@@ -170,10 +175,27 @@ public class AccessTransformerJarProcessor implements MinecraftJarProcessor<Acce
 		configuration.apply(args);
 
 		ForgeToolExecutor.exec(project, spec -> {
-			spec.getMainClass().set("net.minecraftforge.accesstransformer.TransformerProcessor");
+			spec.getMainClass().set(mainClass);
 			spec.setArgs(args);
 			spec.setClasspath(classpath);
 		}).rethrowFailure().assertNormalExitValue();
+	}
+
+	private static LoomVersions chooseAccessTransformer(Project project) {
+		LoomGradleExtension extension = LoomGradleExtension.get(project);
+		boolean serverBundleMetadataPresent = extension.getMinecraftProvider().getServerBundleMetadata() != null;
+
+		if (!serverBundleMetadataPresent) {
+			return LoomVersions.ACCESS_TRANSFORMERS;
+		} else if (extension.isNeoForge()) {
+			MinecraftVersionMeta.JavaVersion javaVersion = extension.getMinecraftProvider().getVersionInfo().javaVersion();
+
+			if (javaVersion != null && javaVersion.majorVersion() >= 21) {
+				return LoomVersions.ACCESS_TRANSFORMERS_NEO;
+			}
+		}
+
+		return LoomVersions.ACCESS_TRANSFORMERS_NEW;
 	}
 
 	@FunctionalInterface

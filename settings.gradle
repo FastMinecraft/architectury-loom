@@ -5,5 +5,16 @@ pluginManagement {
 	}
 }
 
-rootProject.name = "architectury-loom"
+dependencyResolutionManagement {
+	versionCatalogs {
+		testLibs {
+			from(files("gradle/test.libs.versions.toml"))
+		}
+		runtimeLibs {
+			from(files("gradle/runtime.libs.versions.toml"))
+		}
+	}
+}
+
+rootProject.name = name
 include "bootstrap"

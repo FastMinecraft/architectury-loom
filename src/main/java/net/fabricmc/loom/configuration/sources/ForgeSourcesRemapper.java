@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021-2022 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,23 +38,27 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import dev.architectury.loom.util.MappingOption;
 import org.apache.commons.io.output.NullOutputStream;
 import org.cadixdev.lorenz.MappingSet;
 import org.cadixdev.mercury.Mercury;
 import org.cadixdev.mercury.remapper.MercuryRemapper;
+import org.jetbrains.annotations.Nullable;
 import org.gradle.api.Project;
 
 import net.fabricmc.loom.LoomGradleExtension;
 import net.fabricmc.loom.api.mappings.layered.MappingsNamespace;
+import net.fabricmc.loom.build.IntermediaryNamespaces;
 import net.fabricmc.loom.configuration.providers.mappings.TinyMappingsService;
 import net.fabricmc.loom.task.GenerateSourcesTask;
-import net.fabricmc.loom.util.Constants;
 import net.fabricmc.loom.util.DeletingFileVisitor;
 import net.fabricmc.loom.util.DependencyDownloader;
 import net.fabricmc.loom.util.FileSystemUtil;
 import net.fabricmc.loom.util.ForgeToolExecutor;
+import net.fabricmc.loom.util.LoomVersions;
 import net.fabricmc.loom.util.SourceRemapper;
 import net.fabricmc.loom.util.ThreadingUtils;
 import net.fabricmc.loom.util.TinyRemapperHelper;
@@ -78,21 +82,31 @@ public class ForgeSourcesRemapper {
 			minecraftJar = minecraftJars.get(0);
 		}
 
-		Path sourcesJar = GenerateSourcesTask.getMappedJarFileWithSuffix(minecraftJar.toFile(), "-sources.jar").toPath();
+		Path sourcesJar = GenerateSourcesTask.getJarFileWithSuffix("-sources.jar", minecraftJar).toPath();
 
 		if (!Files.exists(sourcesJar)) {
 			try (var serviceManager = new ScopedSharedServiceManager()) {
-				addForgeSources(project, serviceManager, sourcesJar);
+				addForgeSources(project, serviceManager, minecraftJar, sourcesJar);
 			}
 		}
 	}
 
-	public static void addForgeSources(Project project, SharedServiceManager serviceManager, Path sourcesJar) throws IOException {
-		try (FileSystemUtil.Delegate delegate = FileSystemUtil.getJarFileSystem(sourcesJar, true)) {
+	public static void addForgeSources(Project project, SharedServiceManager serviceManager, @Nullable Path inputJar, Path sourcesJar) throws IOException {
+		try (FileSystemUtil.Delegate inputFs = inputJar == null ? null : FileSystemUtil.getJarFileSystem(inputJar, true);
+			FileSystemUtil.Delegate outputFs = FileSystemUtil.getJarFileSystem(sourcesJar, true)) {
 			ThreadingUtils.TaskCompleter taskCompleter = ThreadingUtils.taskCompleter();
 
-			provideForgeSources(project, serviceManager, (path, bytes) -> {
-				Path fsPath = delegate.get().getPath(path);
+			provideForgeSources(project, serviceManager, path -> {
+				Path inputPath = inputFs == null ? null : inputFs.get().getPath(path.replace(".java", ".class"));
+
+				if (inputPath != null && Files.notExists(inputPath)) {
+					project.getLogger().info("Discarding forge source file {} as it does not exist in the input jar", path);
+					return false;
+				}
+
+				return !path.contains("$");
+			}, (path, bytes) -> {
+				Path fsPath = outputFs.get().getPath(path);
 
 				if (fsPath.getParent() != null) {
 					try {
@@ -103,6 +117,7 @@ public class ForgeSourcesRemapper {
 				}
 
 				taskCompleter.add(() -> {
+					project.getLogger().info("Added forge source file {}", path);
 					Files.write(fsPath, bytes, StandardOpenOption.CREATE);
 				});
 			});
@@ -111,17 +126,19 @@ public class ForgeSourcesRemapper {
 		}
 	}
 
-	public static void provideForgeSources(Project project, SharedServiceManager serviceManager, BiConsumer<String, byte[]> consumer) throws IOException {
+	public static void provideForgeSources(Project project, SharedServiceManager serviceManager, Predicate<String> classFilter, BiConsumer<String, byte[]> consumer) throws IOException {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
-		String sourceDependency = extension.getForgeUserdevProvider().getJson().getAsJsonPrimitive("sources").getAsString();
+		String sourceDependency = extension.getForgeUserdevProvider().getConfig().sources();
 		List<Path> forgeInstallerSources = new ArrayList<>();
 
 		for (File file : DependencyDownloader.download(project, sourceDependency)) {
 			forgeInstallerSources.add(file.toPath());
+			project.getLogger().info("Found forge source jar: {}", file);
 		}
 
 		project.getLogger().lifecycle(":found {} forge source jars", forgeInstallerSources.size());
 		Map<String, byte[]> forgeSources = extractSources(forgeInstallerSources);
+		forgeSources.keySet().removeIf(classFilter.negate());
 		project.getLogger().lifecycle(":extracted {} forge source classes", forgeSources.size());
 		remapSources(project, serviceManager, forgeSources);
 		forgeSources.forEach(consumer);
@@ -202,23 +219,26 @@ public class ForgeSourcesRemapper {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
 		Mercury mercury = SourceRemapper.createMercuryWithClassPath(project, false);
 
-		TinyMappingsService mappingsService = extension.getMappingConfiguration().getMappingsService(serviceManager, true);
-		MappingSet mappings = new TinyMappingsReader(mappingsService.getMappingTree(), "srg", "named").read();
+		final MappingOption mappingOption = MappingOption.forPlatform(extension);
+		final String sourceNamespace = IntermediaryNamespaces.intermediary(project);
+		TinyMappingsService mappingsService = extension.getMappingConfiguration().getMappingsService(serviceManager, mappingOption);
+		MappingSet mappings = new TinyMappingsReader(mappingsService.getMappingTree(), sourceNamespace, "named").read();
 
 		for (Map.Entry<String, String> entry : TinyRemapperHelper.JSR_TO_JETBRAINS.entrySet()) {
 			mappings.getOrCreateClassMapping(entry.getKey()).setDeobfuscatedName(entry.getValue());
 		}
 
 		Set<File> files = project.getConfigurations()
-				.detachedConfiguration(project.getDependencies().create(Constants.Dependencies.JETBRAINS_ANNOTATIONS + Constants.Dependencies.Versions.JETBRAINS_ANNOTATIONS))
+				.detachedConfiguration(project.getDependencies().create(LoomVersions.JETBRAINS_ANNOTATIONS.mavenNotation()))
 				.resolve();
 
 		for (File file : files) {
 			mercury.getClassPath().add(file.toPath());
 		}
 
-		// Distinct and add the srg jar at the top, so it gets prioritized
-		mercury.getClassPath().addAll(0, extension.getMinecraftJars(MappingsNamespace.SRG));
+		// Distinct and add the srg/mojang jar at the top, so it gets prioritized
+		MappingsNamespace sourceNs = extension.isNeoForge() ? MappingsNamespace.MOJANG : MappingsNamespace.SRG;
+		mercury.getClassPath().addAll(0, extension.getMinecraftJars(sourceNs));
 
 		List<Path> newClassPath = mercury.getClassPath().stream()
 				.distinct()

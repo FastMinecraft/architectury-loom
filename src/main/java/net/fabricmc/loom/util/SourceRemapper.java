@@ -65,7 +65,7 @@ public class SourceRemapper {
 	private Mercury mercury;
 
 	public SourceRemapper(Project project, SharedServiceManager serviceManager, boolean toNamed) {
-		this(project, serviceManager, toNamed ? IntermediaryNamespaces.intermediary(project) : "named", !toNamed ? IntermediaryNamespaces.intermediary(project) : "named");
+		this(project, serviceManager, toNamed ? IntermediaryNamespaces.runtimeIntermediary(project) : "named", !toNamed ? IntermediaryNamespaces.runtimeIntermediary(project) : "named");
 	}
 
 	public SourceRemapper(Project project, SharedServiceManager serviceManager, String from, String to) {
@@ -80,7 +80,7 @@ public class SourceRemapper {
 			try {
 				logger.progress("remapping sources - " + source.getName());
 				remapSourcesInner(source, destination);
-				ZipReprocessorUtil.reprocessZip(destination, reproducibleFileOrder, preserveFileTimestamps);
+				ZipReprocessorUtil.reprocessZip(destination.toPath(), reproducibleFileOrder, preserveFileTimestamps);
 
 				// Set the remapped sources creation date to match the sources if we're likely succeeded in making it
 				destination.setLastModified(source.lastModified());
@@ -98,7 +98,7 @@ public class SourceRemapper {
 			return;
 		}
 
-		project.getLogger().lifecycle(":remapping sources");
+		project.getLogger().lifecycle(":remapping sources (Mercury, {} -> {})", from, to);
 
 		ProgressLoggerFactory progressLoggerFactory = ((ProjectInternal) project).getServices().get(ProgressLoggerFactory.class);
 		ProgressLogger progressLogger = progressLoggerFactory.newOperation(SourceRemapper.class.getName());
@@ -199,14 +199,14 @@ public class SourceRemapper {
 			mercury.getClassPath().add(intermediaryJar);
 		}
 
-		if (extension.isForge()) {
-			for (Path srgJar : extension.getMinecraftJars(MappingsNamespace.SRG)) {
-				mercury.getClassPath().add(srgJar);
+		if (extension.isForgeLike()) {
+			for (Path jar : extension.getMinecraftJars(IntermediaryNamespaces.runtimeIntermediaryNamespace(project))) {
+				mercury.getClassPath().add(jar);
 			}
 		}
 
 		Set<File> files = project.getConfigurations()
-				.detachedConfiguration(project.getDependencies().create(Constants.Dependencies.JETBRAINS_ANNOTATIONS + Constants.Dependencies.Versions.JETBRAINS_ANNOTATIONS))
+				.detachedConfiguration(project.getDependencies().create(LoomVersions.JETBRAINS_ANNOTATIONS.mavenNotation()))
 				.resolve();
 
 		for (File file : files) {

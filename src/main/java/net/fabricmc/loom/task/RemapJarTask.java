@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021-2022 FabricMC
+ * Copyright (c) 2021-2024 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,34 +24,30 @@
 
 package net.fabricmc.loom.task;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import javax.inject.Inject;
 
-import com.google.common.base.Suppliers;
 import com.google.gson.JsonObject;
 import dev.architectury.loom.extensions.ModBuildExtensions;
-import dev.architectury.tinyremapper.OutputConsumerPath;
-import dev.architectury.tinyremapper.TinyRemapper;
 
-import net.fabricmc.loom.configuration.providers.minecraft.MinecraftSourceSets;
+import net.fabricmc.tinyremapper.OutputConsumerPath;
+import net.fabricmc.tinyremapper.TinyRemapper;
 
-import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RegularFileProperty;
@@ -65,8 +61,9 @@ import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
-import org.gradle.api.tasks.TaskDependency;
+import org.gradle.api.tasks.TaskProvider;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,11 +71,10 @@ import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerWriter;
 import net.fabricmc.loom.LoomGradleExtension;
-import net.fabricmc.loom.build.nesting.IncludedJarFactory;
-import net.fabricmc.loom.build.nesting.IncludedJarFactory.LazyNestedFile;
-import net.fabricmc.loom.build.nesting.IncludedJarFactory.NestedFile;
 import net.fabricmc.loom.build.nesting.JarNester;
+import net.fabricmc.loom.build.nesting.NestableJarGenerationTask;
 import net.fabricmc.loom.configuration.accesswidener.AccessWidenerFile;
+import net.fabricmc.loom.configuration.mods.ArtifactMetadata;
 import net.fabricmc.loom.extension.MixinExtension;
 import net.fabricmc.loom.task.service.MappingsService;
 import net.fabricmc.loom.task.service.TinyRemapperService;
@@ -90,6 +86,7 @@ import net.fabricmc.loom.util.SidedClassVisitor;
 import net.fabricmc.loom.util.ZipUtils;
 import net.fabricmc.loom.util.fmj.FabricModJson;
 import net.fabricmc.loom.util.fmj.FabricModJsonFactory;
+import net.fabricmc.loom.util.fmj.FabricModJsonUtils;
 import net.fabricmc.loom.util.service.BuildSharedServiceManager;
 import net.fabricmc.loom.util.service.UnsafeWorkQueueHelper;
 
@@ -98,10 +95,15 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	public abstract ConfigurableFileCollection getNestedJars();
 
 	@Input
-	public abstract ListProperty<NestedFile> getForgeNestedJars();
-
-	@Input
 	public abstract Property<Boolean> getAddNestedDependencies();
+
+	/**
+	 * Whether to optimize the fabric.mod.json file, by default this is false.
+	 *
+	 * <p>The schemaVersion entry will be placed first in the json file
+	 */
+	@Input
+	public abstract Property<Boolean> getOptimizeFabricModJson();
 
 	/**
 	 * Gets the jar paths to the access wideners that will be converted to ATs for Forge runtime.
@@ -140,46 +142,32 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 	private final Provider<BuildSharedServiceManager> serviceManagerProvider;
 
-	private Supplier<TinyRemapperService> tinyRemapperService;
-
 	@Inject
 	public RemapJarTask() {
 		super();
 		serviceManagerProvider = BuildSharedServiceManager.createForTask(this, getBuildEventsListenerRegistry());
-		tinyRemapperService = Suppliers.memoize(() -> TinyRemapperService.getOrCreate(serviceManagerProvider.get().get(), this));
-
-		getClasspath().from(getProject().provider(() -> MinecraftSourceSets.get(getProject()).getConfigurations().stream()
-					.map(MinecraftSourceSets.ConfigurationName::runtime)
-					.map(getProject().getConfigurations()::getByName)
-					.map(Configuration::copy)
-					.toList()
-		));
-		getClasspath().from(getProject().getConfigurations().getByName("modCompileClasspath"));
-
+		final ConfigurationContainer configurations = getProject().getConfigurations();
+		getClasspath().from(configurations.getByName(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME));
 		getAddNestedDependencies().convention(true).finalizeValueOnRead();
-		getReadMixinConfigsFromManifest().convention(LoomGradleExtension.get(getProject()).isForge()).finalizeValueOnRead();
+		getOptimizeFabricModJson().convention(false).finalizeValueOnRead();
+		getReadMixinConfigsFromManifest().convention(LoomGradleExtension.get(getProject()).isForgeLike()).finalizeValueOnRead();
 		getInjectAccessWidener().convention(false);
 
-		Configuration includeConfiguration = getProject().getConfigurations().getByName(Constants.Configurations.INCLUDE);
-		IncludedJarFactory factory = new IncludedJarFactory(getProject());
-
-		if (!LoomGradleExtension.get(getProject()).isForge()) {
-			getNestedJars().from(factory.getNestedJars(includeConfiguration));
-		} else {
-			Provider<Pair<List<LazyNestedFile>, TaskDependency>> forgeNestedJars = factory.getForgeNestedJars(includeConfiguration);
-			getForgeNestedJars().value(forgeNestedJars.map(Pair::left).map(pairs -> {
-				return pairs.stream()
-						.map(LazyNestedFile::resolve)
-						.toList();
-			}));
-			getNestedJars().builtBy(forgeNestedJars.map(Pair::right));
-		}
+		TaskProvider<NestableJarGenerationTask> processIncludeJars = getProject().getTasks().named(Constants.Task.PROCESS_INCLUDE_JARS, NestableJarGenerationTask.class);
+		getNestedJars().from(getProject().fileTree(processIncludeJars.get().getOutputDirectory()));
+		getNestedJars().builtBy(processIncludeJars);
 
 		getUseMixinAP().set(LoomGradleExtension.get(getProject()).getMixin().getUseLegacyMixinAp());
 
 		if (getLoomExtension().multiProjectOptimisation()) {
 			setupPreparationTask();
 		}
+
+		// Make outputs reproducible by default
+		setReproducibleFileOrder(true);
+		setPreserveFileTimestamps(false);
+
+		getJarType().set("classes");
 	}
 
 	private void setupPreparationTask() {
@@ -189,12 +177,9 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		mustRunAfter(prepareJarTask);
 
 		getProject().getGradle().allprojects(project -> {
-			project.getTasks().configureEach(task -> {
-				if (task instanceof PrepareJarRemapTask otherTask) {
-					// Ensure that all remap jars run after all prepare tasks
-					mustRunAfter(otherTask);
-				}
-			});
+			project.getTasks()
+					.withType(PrepareJarRemapTask.class)
+					.configureEach(this::mustRunAfter);
 		});
 	}
 
@@ -205,23 +190,26 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		submitWork(RemapAction.class, params -> {
 			if (getAddNestedDependencies().get()) {
 				params.getNestedJars().from(getNestedJars());
-
-				if (extension.isForge()) {
-					params.getForgeNestedJars().set(getForgeNestedJars());
-				}
 			}
 
-			Supplier<TinyRemapperService> temp = tinyRemapperService;
-			tinyRemapperService = null; // Release the strong reference
-			params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(temp.get()));
-			params.getRemapClasspath().from(getClasspath());
-			params.getMultiProjectOptimisation().set(getLoomExtension().multiProjectOptimisation());
+			if (!params.namespacesMatch()) {
+				params.getTinyRemapperBuildServiceUuid().set(UnsafeWorkQueueHelper.create(getTinyRemapperService()));
+				params.getRemapClasspath().from(getClasspath());
 
-			final boolean mixinAp = getUseMixinAP().get();
-			params.getUseMixinExtension().set(!mixinAp);
+				params.getMultiProjectOptimisation().set(getLoomExtension().multiProjectOptimisation());
 
-			if (mixinAp) {
-				setupLegacyMixinRefmapRemapping(params);
+				final boolean mixinAp = getUseMixinAP().get();
+				params.getUseMixinExtension().set(!mixinAp);
+
+				if (mixinAp) {
+					setupLegacyMixinRefmapRemapping(params);
+				}
+
+				// Add the mixin refmap remap type to the manifest
+				// This is used by the mod dependency remapper to determine if it should remap the refmap
+				// or if the refmap should be remapped by mixin at runtime.
+				final var refmapRemapType = mixinAp ? ArtifactMetadata.MixinRemapType.MIXIN : ArtifactMetadata.MixinRemapType.STATIC;
+				params.getManifestAttributes().put(Constants.Manifest.MIXIN_REMAP_TYPE, refmapRemapType.manifestValue());
 			} else if (extension.isForge()) {
 				throw new RuntimeException("Forge must have useLegacyMixinAp enabled");
 			}
@@ -238,6 +226,8 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			if (!getAtAccessWideners().get().isEmpty()) {
 				params.getMappingBuildServiceUuid().set(UnsafeWorkQueueHelper.create(MappingsService.createDefault(getProject(), serviceManagerProvider.get().get(), getSourceNamespace().get(), getTargetNamespace().get())));
 			}
+
+			params.getOptimizeFmj().set(getOptimizeFabricModJson().get());
 		});
 	}
 
@@ -283,8 +273,6 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	public interface RemapParams extends AbstractRemapParams {
 		ConfigurableFileCollection getNestedJars();
 
-		ListProperty<NestedFile> getForgeNestedJars();
-
 		ConfigurableFileCollection getRemapClasspath();
 
 		Property<ModPlatform> getPlatform();
@@ -295,6 +283,7 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 		Property<Boolean> getUseMixinExtension();
 		Property<Boolean> getMultiProjectOptimisation();
+		Property<Boolean> getOptimizeFmj();
 
 		record RefmapData(List<String> mixinConfigs, String refmapName) implements Serializable { }
 		ListProperty<RefmapData> getMixinData();
@@ -306,11 +295,13 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 	public abstract static class RemapAction extends AbstractRemapAction<RemapParams> {
 		private static final Logger LOGGER = LoggerFactory.getLogger(RemapAction.class);
 
-		private TinyRemapperService tinyRemapperService;
-		private TinyRemapper tinyRemapper;
+		private final @Nullable TinyRemapperService tinyRemapperService;
+		private @Nullable TinyRemapper tinyRemapper;
 
 		public RemapAction() {
-			this.tinyRemapperService = UnsafeWorkQueueHelper.get(getParameters().getTinyRemapperBuildServiceUuid(), TinyRemapperService.class);
+			this.tinyRemapperService = getParameters().getTinyRemapperBuildServiceUuid().isPresent()
+					? UnsafeWorkQueueHelper.get(getParameters().getTinyRemapperBuildServiceUuid(), TinyRemapperService.class)
+					: null;
 		}
 
 		@Override
@@ -318,13 +309,17 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 			try {
 				LOGGER.info("Remapping {} to {}", inputFile, outputFile);
 
-				if (!getParameters().getMultiProjectOptimisation().get()) {
+				if (!getParameters().getMultiProjectOptimisation().getOrElse(false)) {
 					prepare();
 				}
 
-				tinyRemapper = tinyRemapperService.getTinyRemapperForRemapping();
+				if (tinyRemapperService != null) {
+					tinyRemapper = tinyRemapperService.getTinyRemapperForRemapping();
 
-				remap();
+					remap();
+				} else {
+					Files.copy(inputFile, outputFile, StandardCopyOption.REPLACE_EXISTING);
+				}
 
 				if (getParameters().getClientOnlyEntries().isPresent()) {
 					markClientOnlyClasses();
@@ -338,13 +333,17 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 				addNestedJars();
 				ModBuildExtensions.convertAwToAt(getParameters().getAtAccessWideners(), outputFile, getParameters().getMappingBuildServiceUuid());
 
-				if (getParameters().getPlatform().get() != ModPlatform.FORGE) {
+				if (!getParameters().getPlatform().get().isForgeLike()) {
 					modifyJarManifest();
 				}
 
 				rewriteJar();
 
-				if (!getParameters().getMultiProjectOptimisation().get()) {
+				if (getParameters().getOptimizeFmj().get()) {
+					optimizeFMJ();
+				}
+
+				if (tinyRemapperService != null && !getParameters().getMultiProjectOptimisation().get()) {
 					tinyRemapperService.close();
 				}
 
@@ -357,17 +356,21 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 				}
 
 				throw ExceptionUtil.createDescriptiveWrapper(RuntimeException::new, "Failed to remap", e);
-			} finally {
-				tinyRemapperService = null;
 			}
 		}
 
 		private void prepare() {
 			final Path inputFile = getParameters().getInputFile().getAsFile().get().toPath();
-			PrepareJarRemapTask.prepare(tinyRemapperService, inputFile);
+
+			if (tinyRemapperService != null) {
+				PrepareJarRemapTask.prepare(tinyRemapperService, inputFile);
+			}
 		}
 
 		private void remap() throws IOException {
+			Objects.requireNonNull(tinyRemapperService, "tinyRemapperService");
+			Objects.requireNonNull(tinyRemapper, "tinyRemapper");
+
 			try (OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(outputFile).build()) {
 				outputConsumer.addNonClassFiles(inputFile);
 				tinyRemapper.apply(outputConsumer, tinyRemapperService.getOrCreateTag(inputFile));
@@ -409,6 +412,10 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		}
 
 		private void remapAccessWidener() throws IOException {
+			if (getParameters().namespacesMatch()) {
+				return;
+			}
+
 			final AccessWidenerFile accessWidenerFile = AccessWidenerFile.fromModJar(inputFile);
 
 			if (accessWidenerFile == null) {
@@ -422,6 +429,8 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 		}
 
 		private byte[] remapAccessWidener(byte[] input) {
+			Objects.requireNonNull(tinyRemapper, "tinyRemapper");
+
 			int version = AccessWidenerReader.readVersion(input);
 
 			AccessWidenerWriter writer = new AccessWidenerWriter(version);
@@ -439,32 +448,39 @@ public abstract class RemapJarTask extends AbstractRemapJarTask {
 
 		private void addNestedJars() {
 			FileCollection nestedJars = getParameters().getNestedJars();
-			ListProperty<NestedFile> forgeNestedJars = getParameters().getForgeNestedJars();
 
-			if (nestedJars.isEmpty() && (!forgeNestedJars.isPresent() || forgeNestedJars.get().isEmpty())) {
+			if (nestedJars.isEmpty()) {
 				LOGGER.info("No jars to nest");
 				return;
 			}
 
-			Set<File> jars = new HashSet<>(nestedJars.getFiles());
-			jars.addAll(forgeNestedJars.get().stream().map(NestedFile::file).toList());
-			JarNester.nestJars(jars, forgeNestedJars.getOrElse(List.of()), outputFile.toFile(), getParameters().getPlatform().get(), LOGGER);
+			JarNester.nestJars(nestedJars.getFiles(), outputFile.toFile(), getParameters().getPlatform().get(), LOGGER);
 		}
 
 		private void addRefmaps() throws IOException {
-			if (getParameters().getUseMixinExtension().get()) {
+			if (getParameters().getUseMixinExtension().getOrElse(false)) {
 				return;
 			}
 
 			for (RemapParams.RefmapData refmapData : getParameters().getMixinData().get()) {
-				int transformed = ZipUtils.transformJson(JsonObject.class, outputFile, refmapData.mixinConfigs().stream().collect(Collectors.toMap(s -> s, s -> json -> {
-					if (!json.has("refmap")) {
-						json.addProperty("refmap", refmapData.refmapName());
-					}
+				if (ZipUtils.contains(outputFile, refmapData.refmapName())) {
+					int transformed = ZipUtils.transformJson(JsonObject.class, outputFile, refmapData.mixinConfigs().stream().collect(Collectors.toMap(s -> s, s -> json -> {
+						if (!json.has("refmap")) {
+							json.addProperty("refmap", refmapData.refmapName());
+						}
 
-					return json;
-				})));
+						return json;
+					})));
+				}
 			}
+		}
+
+		private void optimizeFMJ() throws IOException {
+			if (!ZipUtils.contains(outputFile, FabricModJsonFactory.FABRIC_MOD_JSON)) {
+				return;
+			}
+
+			ZipUtils.transformJson(JsonObject.class, outputFile, FabricModJsonFactory.FABRIC_MOD_JSON, FabricModJsonUtils::optimizeFmj);
 		}
 	}
 

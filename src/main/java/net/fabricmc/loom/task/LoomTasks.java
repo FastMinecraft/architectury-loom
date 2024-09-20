@@ -56,18 +56,22 @@ public abstract class LoomTasks implements Runnable {
 			t.setDescription("Migrates mappings to a new version.");
 			t.getOutputs().upToDateWhen(o -> false);
 		});
+
+		var generateLog4jConfig = getTasks().register("generateLog4jConfig", GenerateLog4jConfigTask.class, t -> {
+			t.setDescription("Generate the log4j config file");
+		});
+		var generateRemapClasspath = getTasks().register("generateRemapClasspath", GenerateRemapClasspathTask.class, t -> {
+			t.setDescription("Generate the remap classpath file");
+		});
 		getTasks().register("generateDLIConfig", GenerateDLIConfigTask.class, t -> {
 			t.setDescription("Generate the DevLaunchInjector config file");
 
 			// Must allow these IDE files to be generated first
 			t.mustRunAfter(getTasks().named("eclipse"));
 			t.mustRunAfter(getTasks().named("idea"));
-		});
-		getTasks().register("generateLog4jConfig", GenerateLog4jConfigTask.class, t -> {
-			t.setDescription("Generate the log4j config file");
-		});
-		getTasks().register("generateRemapClasspath", GenerateRemapClasspathTask.class, t -> {
-			t.setDescription("Generate the remap classpath file");
+
+			t.dependsOn(generateLog4jConfig);
+			t.getRemapClasspathFile().set(generateRemapClasspath.get().getRemapClasspathFile());
 		});
 
 		getTasks().register("configureLaunch", task -> {
@@ -134,33 +138,48 @@ public abstract class LoomTasks implements Runnable {
 		});
 	}
 
+	private static String getRunConfigTaskName(RunConfigSettings config) {
+		String configName = config.getName();
+		return "run" + configName.substring(0, 1).toUpperCase() + configName.substring(1);
+	}
+
 	private void registerRunTasks() {
 		LoomGradleExtension extension = LoomGradleExtension.get(getProject());
 
 		Preconditions.checkArgument(extension.getRunConfigs().size() == 0, "Run configurations must not be registered before loom");
 
 		extension.getRunConfigs().whenObjectAdded(config -> {
-			String configName = config.getName();
-			String taskName = "run" + configName.substring(0, 1).toUpperCase() + configName.substring(1);
-
-			getTasks().register(taskName, RunGameTask.class, config).configure(t -> {
+			getTasks().register(getRunConfigTaskName(config), RunGameTask.class, config).configure(t -> {
 				t.setDescription("Starts the '" + config.getConfigName() + "' run configuration");
 
 				t.dependsOn(config.getEnvironment().equals("client") ? "configureClientLaunch" : "configureLaunch");
 			});
 		});
+
+		extension.getRunConfigs().whenObjectRemoved(runConfigSettings -> {
+			getTasks().named(getRunConfigTaskName(runConfigSettings), task -> {
+				// Disable the task so it can't be run
+				task.setEnabled(false);
+			});
+		});
+
 		extension.getRunConfigs().create("client", RunConfigSettings::client);
 		extension.getRunConfigs().create("server", RunConfigSettings::server);
 
 		// Remove the client or server run config when not required. Done by name to not remove any possible custom run configs
 		GradleUtils.afterSuccessfulEvaluation(getProject(), () -> {
-			String taskName = switch (extension.getMinecraftJarConfiguration().get()) {
-			case SERVER_ONLY -> "client";
-			case CLIENT_ONLY -> "server";
-			default -> null;
-			};
+			String taskName;
 
-			if (taskName == null) {
+			boolean serverOnly = extension.getMinecraftJarConfiguration().get() == MinecraftJarConfiguration.SERVER_ONLY;
+			boolean clientOnly = extension.getMinecraftJarConfiguration().get() == MinecraftJarConfiguration.CLIENT_ONLY;
+
+			if (serverOnly) {
+				// Server only, remove the client run config
+				taskName = "client";
+			} else if (clientOnly) {
+				// Client only, remove the server run config
+				taskName = "server";
+			} else {
 				return;
 			}
 

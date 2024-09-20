@@ -1,7 +1,7 @@
 /*
  * This file is part of fabric-loom, licensed under the MIT License (MIT).
  *
- * Copyright (c) 2021 FabricMC
+ * Copyright (c) 2021-2023 FabricMC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,7 +24,6 @@
 
 package net.fabricmc.loom.util;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
@@ -33,8 +32,7 @@ import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import com.google.common.collect.ImmutableMap;
-import dev.architectury.tinyremapper.IMappingProvider;
-import dev.architectury.tinyremapper.TinyRemapper;
+import dev.architectury.loom.util.MappingOption;
 import org.gradle.api.Project;
 
 import net.fabricmc.loom.LoomGradleExtension;
@@ -45,6 +43,8 @@ import net.fabricmc.mappingio.MappingReader;
 import net.fabricmc.mappingio.tree.MappingTree;
 import net.fabricmc.mappingio.tree.MappingTreeView;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
+import net.fabricmc.tinyremapper.IMappingProvider;
+import net.fabricmc.tinyremapper.TinyRemapper;
 
 /**
  * Contains shortcuts to create tiny remappers using the mappings accessibly to the project.
@@ -70,26 +70,24 @@ public final class TinyRemapperHelper {
 
 	public static TinyRemapper getTinyRemapper(Project project, SharedServiceManager serviceManager, String fromM, String toM, boolean fixRecords, Consumer<TinyRemapper.Builder> builderConsumer, Set<String> fromClassNames) throws IOException {
 		LoomGradleExtension extension = LoomGradleExtension.get(project);
-		boolean srg = (fromM.equals(MappingsNamespace.SRG.toString()) || toM.equals(MappingsNamespace.SRG.toString())) && extension.isForge();
-		MemoryMappingTree mappingTree = extension.getMappingConfiguration().getMappingsService(serviceManager, srg).getMappingTree();
+		final MappingOption mappingOption = MappingOption.forPlatform(extension);
+		MemoryMappingTree mappingTree = extension.getMappingConfiguration().getMappingsService(serviceManager, mappingOption).getMappingTree();
 
 		if (fixRecords && !mappingTree.getSrcNamespace().equals(fromM)) {
-			throw new IllegalStateException("Mappings src namespace must match remap src namespace");
+			throw new IllegalStateException("Mappings src namespace must match remap src namespace, expected " + fromM + " but got " + mappingTree.getSrcNamespace());
 		}
 
 		int intermediaryNsId = mappingTree.getNamespaceId(MappingsNamespace.INTERMEDIARY.toString());
 
 		TinyRemapper.Builder builder = TinyRemapper.newRemapper()
-				.logUnknownInvokeDynamic(false)
-				.ignoreConflicts(extension.isForge())
-				.cacheMappings(true)
+				.ignoreConflicts(extension.isForgeLike())
 				.threads(Runtime.getRuntime().availableProcessors())
-				.logger(project.getLogger()::lifecycle)
 				.withMappings(create(mappingTree, fromM, toM, true))
 				.renameInvalidLocals(true)
 				.rebuildSourceFilenames(true)
 				.invalidLvNamePattern(MC_LV_PATTERN)
 				.inferNameFromSameLvIndex(true)
+				.withKnownIndyBsm(extension.getKnownIndyBsms().get())
 				.extraPreApplyVisitor((cls, next) -> {
 					if (fixRecords && !cls.isRecord() && "java/lang/Record".equals(cls.getSuperName())) {
 						return new RecordComponentFixVisitor(next, mappingTree, intermediaryNsId);
@@ -98,7 +96,7 @@ public final class TinyRemapperHelper {
 					return next;
 				});
 
-		if (extension.isForge()) {
+		if (extension.isForgeLike()) {
 			if (!fromClassNames.isEmpty()) {
 				builder.withMappings(InnerClassRemapper.of(fromClassNames, mappingTree, fromM, toM));
 			}
@@ -108,11 +106,6 @@ public final class TinyRemapperHelper {
 
 		builderConsumer.accept(builder);
 		return builder.build();
-	}
-
-	public static Path[] getMinecraftCompileLibraries(Project project) {
-		return project.getConfigurations().getByName(Constants.Configurations.MINECRAFT_COMPILE_LIBRARIES).getFiles()
-				.stream().map(File::toPath).toArray(Path[]::new);
 	}
 
 	private static IMappingProvider.Member memberOf(String className, String memberName, String descriptor) {
