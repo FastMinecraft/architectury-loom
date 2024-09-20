@@ -39,7 +39,7 @@ logger.lifecycle(":building plugin v${version}")
 
 repositories {
 	mavenCentral()
-	maven { url "https://maven.fastmc.dev/" }
+	maven { url "https://maven.luna5ama.dev/" }
 	maven { url "https://maven.fabricmc.net/" }
 	maven { url "https://maven.architectury.dev/" }
 	maven {
